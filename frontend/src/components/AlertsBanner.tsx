@@ -7,7 +7,7 @@ type Alert = {
 const levelColor: Record<Alert["level"], string> = {
   info: "#2563eb",
   warning: "#d97706",
-  critical: "#dc2626"
+  critical: "#dc2626",
 };
 
 interface Props {
@@ -28,7 +28,7 @@ function AlertsBanner({ alerts }: Props) {
             background: levelColor[alert.level],
             padding: "0.75rem",
             borderRadius: "0.5rem",
-            marginBottom: "0.5rem"
+            marginBottom: "0.5rem",
           }}
         >
           {alert.message}

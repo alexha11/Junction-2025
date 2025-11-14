@@ -24,12 +24,18 @@ const OverridePanel = ({ schedule }: { schedule?: any }) => {
         />
         <button
           type="submit"
-          style={{ marginTop: "0.75rem", padding: "0.5rem 1rem", borderRadius: "0.5rem" }}
+          style={{
+            marginTop: "0.75rem",
+            padding: "0.5rem 1rem",
+            borderRadius: "0.5rem",
+          }}
         >
           Submit
         </button>
       </form>
-      {submitted && <div style={{ marginTop: "0.5rem" }}>Override logged. Thank you.</div>}
+      {submitted && (
+        <div style={{ marginTop: "0.5rem" }}>Override logged. Thank you.</div>
+      )}
       {schedule?.generated_at && (
         <p style={{ opacity: 0.6 }}>
           Last recommendation:{" "}

@@ -13,28 +13,28 @@ const useSystemState = () =>
   useQuery({
     queryKey: ["system-state"],
     queryFn: async () => (await api.get("/system/state")).data,
-    refetchInterval: 15_000
+    refetchInterval: 15_000,
   });
 
 const useForecasts = () =>
   useQuery({
     queryKey: ["forecasts"],
     queryFn: async () => (await api.get("/system/forecasts")).data,
-    refetchInterval: 60_000
+    refetchInterval: 60_000,
   });
 
 const useSchedule = () =>
   useQuery({
     queryKey: ["schedule"],
     queryFn: async () => (await api.get("/system/schedule")).data,
-    refetchInterval: 60_000
+    refetchInterval: 60_000,
   });
 
 const useAlerts = () =>
   useQuery({
     queryKey: ["alerts"],
     queryFn: async () => (await api.get("/alerts")).data,
-    refetchInterval: 30_000
+    refetchInterval: 30_000,
   });
 
 function App() {

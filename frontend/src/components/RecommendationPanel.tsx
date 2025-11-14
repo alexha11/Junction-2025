@@ -15,10 +15,8 @@ const RecommendationPanel = ({ schedule }: { schedule?: Schedule }) => (
       <ul>
         {schedule.entries.map((entry) => (
           <li key={`${entry.pump_id}-${entry.start_time}`}>
-            {entry.pump_id}: {entry.target_frequency_hz.toFixed(1)} Hz |
-            {" "}
-            {new Date(entry.start_time).toLocaleTimeString()} -
-            {" "}
+            {entry.pump_id}: {entry.target_frequency_hz.toFixed(1)} Hz |{" "}
+            {new Date(entry.start_time).toLocaleTimeString()} -{" "}
             {new Date(entry.end_time).toLocaleTimeString()}
           </li>
         ))}

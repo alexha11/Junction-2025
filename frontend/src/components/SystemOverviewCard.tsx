@@ -20,7 +20,11 @@ interface Props {
 
 const Stat = ({ label, value }: { label: string; value: string }) => (
   <div>
-    <div style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: 0.7 }}>{label}</div>
+    <div
+      style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: 0.7 }}
+    >
+      {label}
+    </div>
     <div style={{ fontSize: "1.75rem", fontWeight: 600 }}>{value}</div>
   </div>
 );
@@ -32,10 +36,16 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
       <div>Loading...</div>
     ) : (
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-        <Stat label="Tunnel Level (m)" value={state.tunnel_level_m.toFixed(2)} />
+        <Stat
+          label="Tunnel Level (m)"
+          value={state.tunnel_level_m.toFixed(2)}
+        />
         <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
-        <Stat label="Price (EUR/MWh)" value={state.electricity_price_eur_mwh.toFixed(1)} />
+        <Stat
+          label="Price (EUR/MWh)"
+          value={state.electricity_price_eur_mwh.toFixed(1)}
+        />
       </div>
     )}
     <div style={{ marginTop: "1rem", maxHeight: 160, overflow: "auto" }}>
