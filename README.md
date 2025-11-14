@@ -25,8 +25,9 @@ Each agent currently ships with deterministic stub logic so the rest of the stac
 cd agents
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python weather_agent/main.py
-python price_agent/main.py
+cd ..  # run agents as modules so the package is discoverable
+python -m agents.weather_agent.main
+python -m agents.price_agent.main
 # ... repeat for other agents as needed
 ```
 
