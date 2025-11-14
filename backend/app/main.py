@@ -12,7 +12,7 @@ _scheduler: OptimizationScheduler | None = None
 
 
 @asynccontextmanager
-def lifespan(app: FastAPI):  # noqa: ARG001
+async def lifespan(app: FastAPI):  # noqa: ARG001
     global _scheduler
     settings = get_settings()
     _scheduler = OptimizationScheduler(
