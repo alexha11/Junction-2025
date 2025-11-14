@@ -1,30 +1,27 @@
-body {
-  margin: 0;
-  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  background-color: #0c111d;
-  color: #f3f4f6;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
+    background-image: radial-gradient(circle at 10% 20%, rgba(56, 189, 248, 0.15), transparent 45%),
+      radial-gradient(circle at 90% 10%, rgba(249, 115, 22, 0.08), transparent 55%),
+      radial-gradient(circle at 50% 80%, rgba(14, 165, 233, 0.08), transparent 50%),
+      linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.98));
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
 }
 
-#root {
-  min-height: 100vh;
-}
+@layer components {
+  .glass-card {
+    @apply rounded-3xl border border-white/5 bg-slate-900/70 p-6 shadow-card backdrop-blur-xl;
+  }
 
-.dashboard {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 1rem;
-  padding: 1.5rem;
-}
-
-.card {
-  background: #111828;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.35);
-}
-
-.card h2 {
-  margin-top: 0;
-  font-size: 1.1rem;
+  .section-title {
+    @apply mb-4 text-sm font-semibold uppercase tracking-widest text-slate-400;
+  }
 }

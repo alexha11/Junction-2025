@@ -9,22 +9,40 @@ type Schedule = {
 };
 
 const RecommendationPanel = ({ schedule }: { schedule?: Schedule }) => (
-  <div className="card">
-    <h2>AI Recommendation</h2>
+  <div className="glass-card">
+    <p className="section-title">AI recommendation</p>
+    <h2 className="text-2xl font-semibold text-white">Pump plan</h2>
     {schedule?.entries ? (
-      <ul>
+      <ul className="mt-4 space-y-3">
         {schedule.entries.map((entry) => (
-          <li key={`${entry.pump_id}-${entry.start_time}`}>
-            {entry.pump_id}: {entry.target_frequency_hz.toFixed(1)} Hz |{" "}
-            {new Date(entry.start_time).toLocaleTimeString()} -{" "}
-            {new Date(entry.end_time).toLocaleTimeString()}
+          <li
+            key={`${entry.pump_id}-${entry.start_time}`}
+            className="rounded-2xl border border-white/5 bg-white/5 px-4 py-3 text-sm text-slate-200"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-base font-semibold text-white">
+                {entry.pump_id}
+              </span>
+              <span className="text-brand-accent">
+                {entry.target_frequency_hz.toFixed(1)} Hz
+              </span>
+            </div>
+            <div className="mt-1 text-xs uppercase tracking-wide text-slate-400">
+              {new Date(entry.start_time).toLocaleTimeString()} – {new Date(entry.end_time).toLocaleTimeString()}
+            </div>
           </li>
         ))}
       </ul>
     ) : (
-      <div>No schedule yet.</div>
+      <div className="mt-6 rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-slate-400">
+        No schedule yet. Waiting for latest telemetry.
+      </div>
     )}
-    <p style={{ opacity: 0.7 }}>{schedule?.justification}</p>
+    {schedule?.justification && (
+      <p className="mt-4 rounded-2xl border border-brand-accent/20 bg-brand-accent/5 px-4 py-3 text-sm text-slate-200">
+        {schedule.justification}
+      </p>
+    )}
   </div>
 );
 

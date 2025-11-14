@@ -19,52 +19,59 @@ interface Props {
 }
 
 const Stat = ({ label, value }: { label: string; value: string }) => (
-  <div>
-    <div
-      style={{ fontSize: "0.75rem", textTransform: "uppercase", opacity: 0.7 }}
-    >
+  <div className="flex flex-col gap-1 rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
+    <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
       {label}
-    </div>
-    <div style={{ fontSize: "1.75rem", fontWeight: 600 }}>{value}</div>
+    </span>
+    <span className="text-2xl font-semibold text-white">{value}</span>
   </div>
 );
 
 const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
-  <div className="card">
-    <h2>System Overview</h2>
+  <div className="glass-card">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <p className="section-title">System overview</p>
+        <h2 className="text-2xl font-semibold text-white">Realtime health</h2>
+      </div>
+      {!loading && state && (
+        <span className="text-xs text-slate-400">
+          {new Date().toLocaleTimeString()}
+        </span>
+      )}
+    </div>
     {loading || !state ? (
-      <div>Loading...</div>
+      <div className="mt-6 animate-pulse rounded-2xl border border-white/5 px-4 py-6 text-center text-sm text-slate-400">
+        Loading latest telemetry...
+      </div>
     ) : (
-      <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-        <Stat
-          label="Tunnel Level (m)"
-          value={state.tunnel_level_m.toFixed(2)}
-        />
+      <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
+        <Stat label="Tunnel level (m)" value={state.tunnel_level_m.toFixed(2)} />
         <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
-        <Stat
-          label="Price (EUR/MWh)"
-          value={state.electricity_price_eur_mwh.toFixed(1)}
-        />
+        <Stat label="Price (EUR/MWh)" value={state.electricity_price_eur_mwh.toFixed(1)} />
       </div>
     )}
-    <div style={{ marginTop: "1rem", maxHeight: 160, overflow: "auto" }}>
-      <table width="100%">
-        <thead>
+    <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5">
+      <table className="w-full text-sm text-slate-300">
+        <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
           <tr>
-            <th align="left">Pump</th>
-            <th align="left">State</th>
-            <th align="right">Hz</th>
-            <th align="right">kW</th>
+            <th className="px-4 py-3 text-left">Pump</th>
+            <th className="px-4 py-3 text-left">State</th>
+            <th className="px-4 py-3 text-right">Hz</th>
+            <th className="px-4 py-3 text-right">kW</th>
           </tr>
         </thead>
         <tbody>
           {state?.pumps?.map((pump) => (
-            <tr key={pump.pump_id}>
-              <td>{pump.pump_id}</td>
-              <td>{pump.state}</td>
-              <td align="right">{pump.frequency_hz.toFixed(1)}</td>
-              <td align="right">{pump.power_kw.toFixed(0)}</td>
+            <tr
+              key={pump.pump_id}
+              className="border-t border-white/5 text-white/90 last:border-b-0 hover:bg-white/5"
+            >
+              <td className="px-4 py-2 font-semibold">{pump.pump_id}</td>
+              <td className="px-4 py-2 capitalize text-slate-300">{pump.state}</td>
+              <td className="px-4 py-2 text-right">{pump.frequency_hz.toFixed(1)}</td>
+              <td className="px-4 py-2 text-right">{pump.power_kw.toFixed(0)}</td>
             </tr>
           ))}
         </tbody>

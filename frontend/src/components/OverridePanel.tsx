@@ -12,35 +12,36 @@ const OverridePanel = ({ schedule }: { schedule?: any }) => {
   };
 
   return (
-    <div className="card">
-      <h2>Manual Override</h2>
-      <form onSubmit={handleSubmit}>
+    <div className="glass-card">
+      <p className="section-title">Operations guardrail</p>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-2xl font-semibold">Manual override</h2>
+        {schedule?.generated_at && (
+          <span className="text-xs text-slate-400">
+            last AI plan · {new Date(schedule.generated_at).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
         <textarea
-          placeholder="Describe why the AI plan is overridden"
+          placeholder="Describe why the AI plan is adjusted (context, risk, stakeholders)."
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           rows={4}
-          style={{ width: "100%", borderRadius: "0.5rem", padding: "0.5rem" }}
+          className="w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-base text-white placeholder:text-slate-500 focus:border-brand-accent focus:outline-none focus:ring-2 focus:ring-brand-accent/40"
         />
         <button
           type="submit"
-          style={{
-            marginTop: "0.75rem",
-            padding: "0.5rem 1rem",
-            borderRadius: "0.5rem",
-          }}
+          className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-3 text-sm font-semibold uppercase tracking-wide text-white hover:from-sky-400 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!reason}
         >
-          Submit
+          Log override
         </button>
       </form>
       {submitted && (
-        <div style={{ marginTop: "0.5rem" }}>Override logged. Thank you.</div>
-      )}
-      {schedule?.generated_at && (
-        <p style={{ opacity: 0.6 }}>
-          Last recommendation:{" "}
-          {new Date(schedule.generated_at).toLocaleTimeString()}
-        </p>
+        <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm text-emerald-100">
+          Override logged. Thank you for keeping the loop human-aware.
+        </div>
       )}
     </div>
   );

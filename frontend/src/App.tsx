@@ -53,12 +53,20 @@ function App() {
   );
 
   return (
-    <div className="dashboard">
-      <AlertsBanner alerts={alerts ?? []} />
-      <SystemOverviewCard state={systemState} loading={stateLoading} />
-      <ForecastPanel inflow={inflowSeries} prices={priceSeries} />
-      <RecommendationPanel schedule={schedule} />
-      <OverridePanel schedule={schedule} />
+    <div className="min-h-screen px-4 py-8 sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <AlertsBanner alerts={alerts ?? []} />
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <SystemOverviewCard state={systemState} loading={stateLoading} />
+            <ForecastPanel inflow={inflowSeries} prices={priceSeries} />
+          </div>
+          <div className="space-y-6">
+            <RecommendationPanel schedule={schedule} />
+            <OverridePanel schedule={schedule} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
