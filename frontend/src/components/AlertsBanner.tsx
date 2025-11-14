@@ -31,7 +31,9 @@ function AlertsBanner({ alerts }: Props) {
         {alerts.map((alert) => (
           <div
             key={alert.id}
-            className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm shadow-inner ${badgeStyles[alert.level]}`}
+            className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm shadow-inner ${
+              badgeStyles[alert.level]
+            }`}
           >
             <span className="mt-0.5 text-xs font-semibold uppercase">
               {alert.level}

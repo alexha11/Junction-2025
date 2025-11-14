@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import AlertsBanner from "./components/AlertsBanner";
 import ForecastPanel from "./components/ForecastPanel";
+import HeroHeader from "./components/HeroHeader";
 import OverridePanel from "./components/OverridePanel";
+import ProjectContextPanel from "./components/ProjectContextPanel";
+import ProjectRoadmap from "./components/ProjectRoadmap";
 import RecommendationPanel from "./components/RecommendationPanel";
 import SystemOverviewCard from "./components/SystemOverviewCard";
 
@@ -42,6 +45,7 @@ function App() {
   const { data: forecasts } = useForecasts();
   const { data: schedule } = useSchedule();
   const { data: alerts } = useAlerts();
+  const alertsCount = alerts?.length ?? 0;
 
   const inflowSeries = useMemo(
     () => forecasts?.find((series: any) => series.metric === "inflow"),
@@ -51,21 +55,23 @@ function App() {
     () => forecasts?.find((series: any) => series.metric === "price"),
     [forecasts]
   );
-
   return (
-    <div className="min-h-screen px-4 py-8 sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <AlertsBanner alerts={alerts ?? []} />
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="space-y-6 lg:col-span-2">
+    <div className="min-h-screen bg-slate-950/95 px-4 py-10 text-slate-100 sm:px-6 lg:px-12">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <HeroHeader state={systemState} schedule={schedule} alertsCount={alertsCount} />
+        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="space-y-6 lg:col-span-8">
+            <AlertsBanner alerts={alerts ?? []} />
             <SystemOverviewCard state={systemState} loading={stateLoading} />
             <ForecastPanel inflow={inflowSeries} prices={priceSeries} />
           </div>
-          <div className="space-y-6">
+          <div className="space-y-6 lg:col-span-4">
             <RecommendationPanel schedule={schedule} />
             <OverridePanel schedule={schedule} />
+            <ProjectContextPanel />
           </div>
         </div>
+        <ProjectRoadmap />
       </div>
     </div>
   );

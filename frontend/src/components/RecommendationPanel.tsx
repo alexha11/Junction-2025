@@ -28,7 +28,8 @@ const RecommendationPanel = ({ schedule }: { schedule?: Schedule }) => (
               </span>
             </div>
             <div className="mt-1 text-xs uppercase tracking-wide text-slate-400">
-              {new Date(entry.start_time).toLocaleTimeString()} – {new Date(entry.end_time).toLocaleTimeString()}
+              {new Date(entry.start_time).toLocaleTimeString()} –{" "}
+              {new Date(entry.end_time).toLocaleTimeString()}
             </div>
           </li>
         ))}

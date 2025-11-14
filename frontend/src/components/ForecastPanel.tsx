@@ -40,10 +40,20 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={inflow.points}>
                 <XAxis dataKey="timestamp" hide />
-                <YAxis domain={[0, "dataMax + 1"]} width={32} stroke="#475569" />
+                <YAxis
+                  domain={[0, "dataMax + 1"]}
+                  width={32}
+                  stroke="#475569"
+                />
                 <Tooltip
-                  labelFormatter={(value) => new Date(value).toLocaleTimeString()}
-                  contentStyle={{ background: "#0f172a", borderRadius: 16, border: "1px solid rgba(148,163,184,0.3)" }}
+                  labelFormatter={(value) =>
+                    new Date(value).toLocaleTimeString()
+                  }
+                  contentStyle={{
+                    background: "#0f172a",
+                    borderRadius: 16,
+                    border: "1px solid rgba(148,163,184,0.3)",
+                  }}
                 />
                 <Line
                   type="monotone"
@@ -74,8 +84,14 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
                 <XAxis dataKey="timestamp" hide />
                 <YAxis width={32} stroke="#475569" />
                 <Tooltip
-                  labelFormatter={(value) => new Date(value).toLocaleTimeString()}
-                  contentStyle={{ background: "#0f172a", borderRadius: 16, border: "1px solid rgba(148,163,184,0.3)" }}
+                  labelFormatter={(value) =>
+                    new Date(value).toLocaleTimeString()
+                  }
+                  contentStyle={{
+                    background: "#0f172a",
+                    borderRadius: 16,
+                    border: "1px solid rgba(148,163,184,0.3)",
+                  }}
                 />
                 <Line
                   type="monotone"

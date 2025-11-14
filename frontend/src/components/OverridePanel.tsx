@@ -18,7 +18,8 @@ const OverridePanel = ({ schedule }: { schedule?: any }) => {
         <h2 className="text-2xl font-semibold">Manual override</h2>
         {schedule?.generated_at && (
           <span className="text-xs text-slate-400">
-            last AI plan · {new Date(schedule.generated_at).toLocaleTimeString()}
+            last AI plan ·{" "}
+            {new Date(schedule.generated_at).toLocaleTimeString()}
           </span>
         )}
       </div>

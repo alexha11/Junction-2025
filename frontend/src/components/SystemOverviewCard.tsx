@@ -46,10 +46,16 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
       </div>
     ) : (
       <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
-        <Stat label="Tunnel level (m)" value={state.tunnel_level_m.toFixed(2)} />
+        <Stat
+          label="Tunnel level (m)"
+          value={state.tunnel_level_m.toFixed(2)}
+        />
         <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
-        <Stat label="Price (EUR/MWh)" value={state.electricity_price_eur_mwh.toFixed(1)} />
+        <Stat
+          label="Price (EUR/MWh)"
+          value={state.electricity_price_eur_mwh.toFixed(1)}
+        />
       </div>
     )}
     <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5">
@@ -69,9 +75,15 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
               className="border-t border-white/5 text-white/90 last:border-b-0 hover:bg-white/5"
             >
               <td className="px-4 py-2 font-semibold">{pump.pump_id}</td>
-              <td className="px-4 py-2 capitalize text-slate-300">{pump.state}</td>
-              <td className="px-4 py-2 text-right">{pump.frequency_hz.toFixed(1)}</td>
-              <td className="px-4 py-2 text-right">{pump.power_kw.toFixed(0)}</td>
+              <td className="px-4 py-2 capitalize text-slate-300">
+                {pump.state}
+              </td>
+              <td className="px-4 py-2 text-right">
+                {pump.frequency_hz.toFixed(1)}
+              </td>
+              <td className="px-4 py-2 text-right">
+                {pump.power_kw.toFixed(0)}
+              </td>
             </tr>
           ))}
         </tbody>
