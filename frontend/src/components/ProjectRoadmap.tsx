@@ -37,8 +37,8 @@ function ProjectRoadmap() {
           What it takes to ship confidently
         </h3>
         <p className="text-sm text-slate-300">
-          Mirrors the testing guide so operators, engineers, and stakeholders can
-          align on what is already live and what is coming next.
+          Mirrors the testing guide so operators, engineers, and stakeholders
+          can align on what is already live and what is coming next.
         </p>
       </div>
       <div className="mt-6 grid gap-4 md:grid-cols-3">
@@ -50,7 +50,9 @@ function ProjectRoadmap() {
             <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
               {phase.label}
             </p>
-            <h4 className="mt-1 text-lg font-semibold text-white">{phase.focus}</h4>
+            <h4 className="mt-1 text-lg font-semibold text-white">
+              {phase.focus}
+            </h4>
             <ul className="mt-3 space-y-2 text-sm text-slate-200">
               {phase.checklist.map((item) => (
                 <li key={item} className="flex items-start gap-2">

@@ -45,7 +45,9 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
     : undefined;
 
   const lastPlanWindow = schedule?.entries?.[0]
-    ? `${new Date(schedule.entries[0].start_time).toLocaleTimeString()} → ${new Date(
+    ? `${new Date(
+        schedule.entries[0].start_time
+      ).toLocaleTimeString()} → ${new Date(
         schedule.entries[0].end_time
       ).toLocaleTimeString()}`
     : "Awaiting AI plan";
@@ -63,13 +65,17 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
     {
       label: "Inflow vs outflow",
       value: state
-        ? `${state.inflow_m3_s.toFixed(1)} / ${state.outflow_m3_s.toFixed(1)} m³/s`
+        ? `${state.inflow_m3_s.toFixed(1)} / ${state.outflow_m3_s.toFixed(
+            1
+          )} m³/s`
         : "--",
       sub: "Hydro balance",
     },
     {
       label: "Electricity",
-      value: state ? `${state.electricity_price_eur_mwh.toFixed(1)} €/MWh` : "--",
+      value: state
+        ? `${state.electricity_price_eur_mwh.toFixed(1)} €/MWh`
+        : "--",
       sub: "Nord Pool feed",
     },
     {
@@ -105,10 +111,10 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
             </h1>
           </div>
           <p className="max-w-3xl text-base text-slate-300">
-            Multi-agent reasoning ingests weather, inflow, and Nord Pool feeds to
-            propose pump schedules every 15 minutes. Operators stay in the loop with
-            transparent telemetry, justifications, and manual guardrails for HSY’s
-            Blominmäki wastewater plant.
+            Multi-agent reasoning ingests weather, inflow, and Nord Pool feeds
+            to propose pump schedules every 15 minutes. Operators stay in the
+            loop with transparent telemetry, justifications, and manual
+            guardrails for HSY’s Blominmäki wastewater plant.
           </p>
           <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-widest">
             {insightPills.map((pill) => (
@@ -127,17 +133,22 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
               <p className="text-xs uppercase tracking-widest text-slate-400">
                 Last AI plan
               </p>
-              <p className="mt-1 text-lg font-semibold text-white">{lastPlanWindow}</p>
+              <p className="mt-1 text-lg font-semibold text-white">
+                {lastPlanWindow}
+              </p>
             </div>
             <div className="text-right">
               <p className="text-xs uppercase tracking-widest text-slate-400">
                 Generated
               </p>
-              <p className="mt-1 text-lg font-semibold text-white">{lastGenerated}</p>
+              <p className="mt-1 text-lg font-semibold text-white">
+                {lastGenerated}
+              </p>
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-400">
-            Justification & manual override preserved to keep the AI accountable.
+            Justification & manual override preserved to keep the AI
+            accountable.
           </p>
         </div>
       </div>
@@ -150,7 +161,9 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
             <p className="text-xs uppercase tracking-widest text-slate-400">
               {metric.label}
             </p>
-            <p className="mt-2 text-2xl font-semibold text-white">{metric.value}</p>
+            <p className="mt-2 text-2xl font-semibold text-white">
+              {metric.value}
+            </p>
             <p className="text-xs text-slate-400">{metric.sub}</p>
           </div>
         ))}

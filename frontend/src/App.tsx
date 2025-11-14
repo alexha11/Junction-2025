@@ -58,7 +58,11 @@ function App() {
   return (
     <div className="min-h-screen bg-slate-950/95 px-4 py-10 text-slate-100 sm:px-6 lg:px-12">
       <div className="mx-auto max-w-7xl space-y-8">
-        <HeroHeader state={systemState} schedule={schedule} alertsCount={alertsCount} />
+        <HeroHeader
+          state={systemState}
+          schedule={schedule}
+          alertsCount={alertsCount}
+        />
         <div className="grid gap-6 lg:grid-cols-12">
           <div className="space-y-6 lg:col-span-8">
             <AlertsBanner alerts={alerts ?? []} />

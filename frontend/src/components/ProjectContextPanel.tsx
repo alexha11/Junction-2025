@@ -53,7 +53,10 @@ function ProjectContextPanel() {
         </p>
         <ul className="mt-2 space-y-2 text-sm text-slate-200">
           {missionPoints.map((point) => (
-            <li key={point} className="rounded-2xl border border-white/5 bg-white/5 px-3 py-2">
+            <li
+              key={point}
+              className="rounded-2xl border border-white/5 bg-white/5 px-3 py-2"
+            >
               {point}
             </li>
           ))}
@@ -65,7 +68,10 @@ function ProjectContextPanel() {
         </p>
         <div className="mt-2 space-y-3">
           {stack.map((item) => (
-            <div key={item.label} className="rounded-2xl border border-white/5 bg-slate-900/60 px-3 py-2">
+            <div
+              key={item.label}
+              className="rounded-2xl border border-white/5 bg-slate-900/60 px-3 py-2"
+            >
               <p className="text-xs uppercase tracking-widest text-slate-400">
                 {item.label}
               </p>
@@ -76,7 +82,10 @@ function ProjectContextPanel() {
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-2xl border border-brand-accent/10 bg-brand-accent/5 px-3 py-2">
+          <div
+            key={metric.label}
+            className="rounded-2xl border border-brand-accent/10 bg-brand-accent/5 px-3 py-2"
+          >
             <p className="text-xs uppercase tracking-widest text-slate-300">
               {metric.label}
             </p>
