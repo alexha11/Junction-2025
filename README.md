@@ -28,6 +28,9 @@ pip install -r requirements.txt
 cd ..  # run agents as modules so the package is discoverable
 python -m agents.weather_agent.main
 python -m agents.price_agent.main
+python -m agents.status_agent.main
+python -m agents.inflow_agent.main
+python -m agents.optimizer_agent.main
 # ... repeat for other agents as needed
 ```
 
