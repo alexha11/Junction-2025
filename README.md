@@ -8,6 +8,8 @@ This repository contains the end-to-end scaffolding for the multi-agent optimiza
 
 ## Quick Start
 
+### Note: We are using Python version 3.12
+
 ### 1. Backend
 
 ```bash
