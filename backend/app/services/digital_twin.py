@@ -24,7 +24,7 @@ async def get_digital_twin_current_state(self):
                 pump_vars = child.get_children()
 
                 for var in pump_vars:
-                    var_name = str(var.get_browse_name()).replace("2:", "")
+                    var_name = var.get_browse_name().Name
                     value = var.get_value()
                     values[var_name] = value
 

@@ -99,27 +99,54 @@ class AgentsCoordinator:
         self._logger = logging.getLogger(self.__class__.__name__)
 
     async def get_system_state(self) -> SystemState:
-        now = datetime.utcnow()
+        # now = datetime.utcnow()
+
+        twin_cur_state = await get_digital_twin_current_state(self)
         self._logger.debug(
-            "Generating synthetic system state timestamp=%s", now.isoformat()
+            "Generating synthetic system state timestamp=%s",
+            twin_cur_state.get("SimulationTime", "N/A"),
         )
-        pumps = [
-            PumpStatus(
-                pump_id=f"P{i+1}",
-                state=PumpState.on if i % 2 == 0 else PumpState.off,
-                frequency_hz=48.0 if i % 2 == 0 else 0.0,
-                power_kw=350.0 if i % 2 == 0 else 0.0,
-            )
-            for i in range(8)
-        ]
+
+        print("Digital Twin Current State:", json.dumps(twin_cur_state, indent=2))
+
+        pumps = []
+        for station in range(1, 3):  # 1 & 2
+            for pump_num in range(1, 5):  # 1 - 4
+                pumps.append(
+                    PumpStatus(
+                        pump_id=f"P{station}.{pump_num}",
+                        state=(
+                            PumpState.on
+                            if twin_cur_state.get(
+                                f"PumpEfficiency.{station}.{pump_num}.kw", 0.0
+                            )
+                            > 0.0
+                            else PumpState.off
+                        ),
+                        frequency_hz=twin_cur_state.get(
+                            f"PumpFrequency.{station}.{pump_num}.hz", 0.0
+                        ),
+                        power_kw=twin_cur_state.get(
+                            f"PumpEfficiency.{station}.{pump_num}.kw", 0.0
+                        ),
+                    )
+                )
+
+        print("Pumps State:", pumps)
+
         return SystemState(
-            timestamp=now,
-            tunnel_level_m=3.2,
-            tunnel_level_l2_m=3.0,
-            tunnel_water_volume_l1_m3=1250.0,
-            inflow_m3_s=2.1,
-            outflow_m3_s=2.0,
-            electricity_price_eur_mwh=72.5,
+            timestamp=twin_cur_state.get("SimulationTime", "N/A"),
+            tunnel_level_l2_m=twin_cur_state.get("WaterLevelInTunnel.L2.m", 0.0),
+            tunnel_water_volume_l1_m3=twin_cur_state.get(
+                "WaterVolumeInTunnel.L1.m3", 0.0
+            ),
+            inflow_m3_s=twin_cur_state.get("InflowToTunnel.F1.m3per15min", 0.0)
+            / 900.0,  # convert to m3/s from m3/15min
+            outflow_m3_s=twin_cur_state.get("SumOfPumpedFlowToWwtp.F2.m3h", 0.0)
+            / 3600.0,  # convert to m3/s from m3/h
+            electricity_price_eur_cents_kwh=twin_cur_state.get(
+                "ElectricityPrice.2.Normal.ckwh", 0.0
+            ),
             pumps=pumps,
         )
 
