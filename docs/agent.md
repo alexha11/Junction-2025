@@ -4,18 +4,18 @@ This guide walks through every file inside `agents/`, explaining how the MCP-sty
 
 ## Top-Level Files
 
-| File | Purpose |
-| --- | --- |
-| `agents/__init__.py` | Declares the package, signaling that the folder contains importable modules. |
-| `agents/pyproject.toml` | Python packaging metadata (`hatchling` build). Declares the project as `hsy-mcp-agents`, pins Python 3.11+, and lists core dependencies (`pydantic`, `httpx`, `openai`, `aiofiles`). Includes a `dev` extra for `pytest`. |
-| `agents/requirements.txt` | Lightweight alternative for virtualenv bootstrap. Mirrors the dependencies from `pyproject.toml`. Use this with `pip install -r requirements.txt` when not invoking `pip install -e .`. |
+| File                      | Purpose                                                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents/__init__.py`      | Declares the package, signaling that the folder contains importable modules.                                                                                                                                              |
+| `agents/pyproject.toml`   | Python packaging metadata (`hatchling` build). Declares the project as `hsy-mcp-agents`, pins Python 3.11+, and lists core dependencies (`pydantic`, `httpx`, `openai`, `aiofiles`). Includes a `dev` extra for `pytest`. |
+| `agents/requirements.txt` | Lightweight alternative for virtualenv bootstrap. Mirrors the dependencies from `pyproject.toml`. Use this with `pip install -r requirements.txt` when not invoking `pip install -e .`.                                   |
 
 ## Common Utilities
 
-| File | Purpose |
-| --- | --- |
-| `agents/common/__init__.py` | Re-exports `BaseMCPAgent` and `ToolSchema` so other modules can import via `from agents.common import BaseMCPAgent`. |
-| `agents/common/base.py` | Defines `ToolSchema` (a thin `pydantic.BaseModel`) plus the `BaseMCPAgent` abstract class. `BaseMCPAgent` stores a registry of MCP-style tools, exposes `register_tool`/`call_tool`, and implements a `serve()` helper that prints registered tools. Subclasses override `configure()` to register their tool handlers. This file is the core harness you will swap with the OpenAI Agents SDK once MCP servers are live. |
+| File                        | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents/common/__init__.py` | Re-exports `BaseMCPAgent` and `ToolSchema` so other modules can import via `from agents.common import BaseMCPAgent`.                                                                                                                                                                                                                                                                                                      |
+| `agents/common/base.py`     | Defines `ToolSchema` (a thin `pydantic.BaseModel`) plus the `BaseMCPAgent` abstract class. `BaseMCPAgent` stores a registry of MCP-style tools, exposes `register_tool`/`call_tool`, and implements a `serve()` helper that prints registered tools. Subclasses override `configure()` to register their tool handlers. This file is the core harness you will swap with the OpenAI Agents SDK once MCP servers are live. |
 
 ## Weather Agent (`agents/weather_agent/main.py`)
 
