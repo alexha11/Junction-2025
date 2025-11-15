@@ -616,9 +616,11 @@ class MPCOptimizer:
         
         for pid in pump_ids:
             pump_on[pid] = [solver.BoolVar(f"on_{pid}_{t}") for t in range(num_steps)]
+            # Frequency can be 0 when pump is off, or between min/max when on
+            # Lower bound is 0.0 (constraints enforce min when pump is on)
             pump_freq[pid] = [
                 solver.NumVar(
-                    self.pumps[pid].min_frequency_hz if pump_on[pid][t] else 0.0,
+                    0.0,  # Lower bound: 0 when pump is off (constraints enforce min when on)
                     self.pumps[pid].max_frequency_hz,
                     f"freq_{pid}_{t}"
                 )

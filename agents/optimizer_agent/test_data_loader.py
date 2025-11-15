@@ -286,13 +286,16 @@ class HSYDataLoader:
                            else self.df[flow_col].max() / 3600.0)
             max_power_kw = self.df[power_col].max()
             max_freq_hz = self.df[freq_col].max()
-            min_freq_hz = self.df[freq_col][self.df[freq_col] > 10.0].min()  # Only when pump is on
+            # Get minimum frequency when pump is actually operating (filter low values from startup/shutdown)
+            # Ensure minimum is at least 47.8 Hz (actual operating minimum)
+            data_min_freq = self.df[freq_col][self.df[freq_col] > 40.0].min()  # Filter very low values
+            min_freq_hz = max(float(data_min_freq) if not np.isnan(data_min_freq) else 47.8, 47.8)
             
             specs[pump_id] = {
                 'max_flow_m3_s': float(max_flow_m3_s),
                 'max_power_kw': float(max_power_kw),
                 'max_frequency_hz': float(max_freq_hz),
-                'min_frequency_hz': float(min_freq_hz) if not np.isnan(min_freq_hz) else 47.8,
+                'min_frequency_hz': min_freq_hz,  # Ensured to be at least 47.8 Hz
             }
         
         return specs
