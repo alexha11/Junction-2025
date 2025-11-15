@@ -17,7 +17,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 @dataclass
 class ScheduleMetrics:
-    """Metrics for schedule explanation."""
+    """Metrics for schedule explanation.
+
+    Note: price_range_c_per_kwh is expressed in cents per kWh (c/kWh),
+    derived from EUR/MWh values by: c/kWh = EUR/MWh / 10.
+    """
     total_energy_kwh: float
     total_cost_eur: float
     avg_l1_m: float
@@ -25,7 +29,7 @@ class ScheduleMetrics:
     max_l1_m: float
     num_pumps_used: int
     avg_outflow_m3_s: float
-    price_range_eur_mwh: tuple[float, float]
+    price_range_c_per_kwh: tuple[float, float]
     risk_level: str
     optimization_mode: str
 
@@ -346,7 +350,7 @@ Schedule Outcomes:
 - Cost: {metrics.total_cost_eur:.2f} EUR
 - Tunnel level trajectory: {metrics.min_l1_m:.2f} - {metrics.max_l1_m:.2f} m (safe range: 0.5-8.0 m)
 - Pumps utilized: {metrics.num_pumps_used} pumps
-- Electricity price range: {metrics.price_range_eur_mwh[0]:.1f} - {metrics.price_range_eur_mwh[1]:.1f} EUR/MWh
+- Electricity price range: {metrics.price_range_c_per_kwh[0]:.1f} - {metrics.price_range_c_per_kwh[1]:.1f} c/kWh
 
 Explain the STRATEGY in 2-3 sentences:
 1. Why was this specific strategy chosen given the current system state and price conditions?
@@ -904,11 +908,12 @@ IMPORTANT GUIDELINES:
         else:
             parts.append("Normal operations: balanced optimization.")
         
-        # Price-based message
-        price_avg = (metrics.price_range_eur_mwh[0] + metrics.price_range_eur_mwh[1]) / 2
-        if price_avg < 50:
+        # Price-based message (metrics in c/kWh)
+        price_avg = (metrics.price_range_c_per_kwh[0] + metrics.price_range_c_per_kwh[1]) / 2
+        # Thresholds: 5 c/kWh (50 EUR/MWh), 10 c/kWh (100 EUR/MWh)
+        if price_avg < 5:
             parts.append("Low electricity prices: increased pumping to reduce level.")
-        elif price_avg > 100:
+        elif price_avg > 10:
             parts.append("High electricity prices: minimal pumping while maintaining safety.")
         
         # Level-based message

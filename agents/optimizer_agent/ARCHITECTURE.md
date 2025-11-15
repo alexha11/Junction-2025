@@ -437,7 +437,7 @@ flowchart TD
 ```mermaid
 graph TD
     subgraph "Hard Constraints"
-        H1[L1 Min/Max Bounds<br/>0.5m - 8.0m]
+        H1[L1 Min/Max Bounds<br/>0.0m - 8.0m]
         H2[Pump Min Frequency<br/>47.8 Hz]
         H3[Min Pumps On<br/>At least 1 pump]
         H4[Min On/Off Duration<br/>120 minutes]
@@ -446,7 +446,6 @@ graph TD
     subgraph "Soft Constraints (with Violations)"
         S1[L1 Violation Tolerance<br/>±0.5m with Penalty]
         S2[Outflow Smoothness<br/>Minimize Variance]
-        S3[Pump Fairness<br/>Balance Operating Hours]
     end
     
     subgraph "Strategic Guidance"

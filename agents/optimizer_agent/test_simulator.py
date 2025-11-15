@@ -309,7 +309,8 @@ class RollingMPCSimulator:
         reoptimize_interval_minutes: int = 15,
         forecast_method: str = 'perfect',
         llm_explainer: Optional[LLMExplainer] = None,
-        generate_explanations: bool = True,
+        generate_explanations: bool = False,  # Default to False - explanations are slow
+        generate_strategic_plan: bool = True,  # Default to True - strategic planning is fast and useful
         suppress_prefix: bool = True,
     ):
         """Initialize simulator.
@@ -320,7 +321,8 @@ class RollingMPCSimulator:
             reoptimize_interval_minutes: Time between re-optimizations (default 15)
             forecast_method: 'perfect' or 'persistence' for forecasts
             llm_explainer: Optional LLM explainer for generating explanations per step
-            generate_explanations: Whether to generate explanations for each optimization step
+            generate_explanations: Whether to generate explanations for each optimization step (default: False - slow)
+            generate_strategic_plan: Whether to generate 24h strategic plan (default: True - fast and useful)
             suppress_prefix: If True, suppress timestamp/module/level prefix on continuation lines (default: True)
         """
         self.data_loader = data_loader
@@ -329,6 +331,7 @@ class RollingMPCSimulator:
         self.forecast_method = forecast_method
         self.llm_explainer = llm_explainer
         self.generate_explanations = generate_explanations and (llm_explainer is not None)
+        self.generate_strategic_plan = generate_strategic_plan and (llm_explainer is not None)
         self.suppress_prefix = suppress_prefix
         # Initialize forecast quality tracker for recalibration loop
         self.forecast_quality_tracker = ForecastQualityTracker()
@@ -337,7 +340,7 @@ class RollingMPCSimulator:
         self,
         start_time: datetime,
         end_time: datetime,
-        horizon_minutes: int = 120,
+        horizon_minutes: int = 120,  # 2-hour tactical horizon
     ) -> RollingSimulation:
         """Run rolling MPC simulation.
         
@@ -355,11 +358,35 @@ class RollingMPCSimulator:
         horizon_steps = horizon_minutes // self.optimizer.time_step_minutes
         
         # Track simulated L1 (starts from historical value)
-        initial_state = self.data_loader.get_state_at_time(start_time)
+        # For the FIRST step, we start with a fresh/sensible default pump state
+        # (not copying old system decisions). We'll start with one small pump ON
+        # to satisfy min_pumps_on constraint and let optimizer decide the rest.
+        initial_state = self.data_loader.get_state_at_time(start_time, include_pump_states=False)
         if initial_state is None:
             raise ValueError(f"No data available at {start_time}")
+        
+        # Override with sensible initial state: one small pump ON at minimum frequency
+        # This satisfies min_pumps_on=1 and gives optimizer flexibility
+        # Start with pump 2.1 to avoid bias toward group 1
+        initial_pump_states = []
+        for pump_id, _, _ in initial_state.pump_states:
+            # Start with pump 2.1 (small, group 2) at minimum frequency, all others OFF
+            if pump_id == '2.1':
+                initial_pump_states.append((pump_id, True, 47.8))  # ON at min frequency
+            else:
+                initial_pump_states.append((pump_id, False, 0.0))  # OFF
+        initial_state.pump_states = initial_pump_states
 
         simulated_l1 = initial_state.l1_m
+        
+        dt_hours = self.reoptimize_interval_minutes / 60.0
+        
+        # Track which pumps are currently running (for reference only)
+        currently_running_pumps: Set[str] = {'2.1'}  # Start with initial pump
+        
+        # Track flush events: when L1 last reached flush_target_level_m
+        last_flush_time: Optional[datetime] = None
+        flush_target = self.optimizer.constraints.flush_target_level_m
         
         # Forecast error tracking
         forecast_errors = {
@@ -370,9 +397,8 @@ class RollingMPCSimulator:
         window_size = 10  # Track last N steps for error analysis
         
         while current_time <= end_time:
-            # Get current state from historical data (for environmental inputs only: inflow, price, L1)
-            # NOTE: Do NOT use historical pump_states - they represent the OLD strategy with violations
-            # Pump states will come from previous optimization results (for continuity) or defaults
+            # Get current state from historical data (environmental inputs only: inflow, price, L1)
+            # Pump states always come from previous optimization (or initial default)
             current_state = self.data_loader.get_state_at_time(current_time, include_pump_states=False)
             if current_state is None:
                 # Skip if no data
@@ -449,7 +475,7 @@ class RollingMPCSimulator:
                         if inflow_error_pct > 20:
                             logger.warning(f"⚠ Large inflow forecast error: {inflow_error_pct:.1f}% (forecast={forecast_inflow:.2f}, actual={actual_inflow:.2f} m³/s)")
                         if price_error_pct > 30:
-                            logger.warning(f"⚠ Large price forecast error: {price_error_pct:.1f}% (forecast={forecast_price:.1f}, actual={actual_price:.1f} EUR/MWh)")
+                            logger.warning(f"⚠ Large price forecast error: {price_error_pct:.1f}% (forecast={forecast_price:.1f}, actual={actual_price:.1f} c/kWh)")
                         if l1_error_m > 0.5:
                             logger.warning(f"⚠ Large L1 prediction error: {l1_error_m:.2f}m (predicted={predicted_l1:.2f}, actual={simulated_l1:.2f} m)")
             
@@ -464,9 +490,9 @@ class RollingMPCSimulator:
                 current_time += timedelta(minutes=self.reoptimize_interval_minutes)
                 continue
             
-            # Get 24h forecast for strategic planning (if LLM available)
+            # Get 24h forecast for strategic planning (if LLM available and enabled)
             strategic_plan = None
-            if self.generate_explanations and self.llm_explainer:
+            if self.generate_strategic_plan and self.llm_explainer:
                 try:
                     # Request 24h forecast (96 steps of 15 minutes)
                     forecast_24h_steps = 24 * 60 // self.optimizer.time_step_minutes  # 96 steps
@@ -497,14 +523,25 @@ class RollingMPCSimulator:
                                 print()
                             else:
                                 logger.info("")
+                            # Plan type and confidence in table
                             plan_rows = [
                                 ["Plan Type", strategic_plan.plan_type],
-                                ["Description", strategic_plan.description],  # Let table formatter handle wrapping
                             ]
                             if strategic_plan.forecast_confidence:
                                 plan_rows.append(["Forecast Confidence", strategic_plan.forecast_confidence.upper()])
                             
                             log_table(logger, ["Field", "Value"], plan_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                            
+                            # Description in boxed section for full-width display and proper wrapping
+                            if strategic_plan.description:
+                                # Wrap description text properly
+                                desc_lines = wrap_text(strategic_plan.description, 76)  # 80 - 4 for borders
+                                # Blank line before description box
+                                if self.suppress_prefix:
+                                    print()
+                                else:
+                                    logger.info("")
+                                log_boxed(logger, "STRATEGIC PLAN DESCRIPTION", desc_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                             
                             # Time periods table
                             if strategic_plan.time_periods:
@@ -518,10 +555,38 @@ class RollingMPCSimulator:
                                     logger.info("")
                                 log_table(logger, ["Time Period", "Strategy"], period_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
                             
-                            # Reasoning in box
+                            # Reasoning in box (full text, properly wrapped)
                             if strategic_plan.reasoning:
-                                reasoning_lines = strategic_plan.reasoning.split('\n')[:3]  # First 3 lines
-                                reasoning_lines = [line[:76] for line in reasoning_lines]  # Truncate long lines
+                                # Split by newlines and process each paragraph
+                                paragraphs = [p.strip() for p in strategic_plan.reasoning.split('\n\n') if p.strip()]
+                                reasoning_lines = []
+                                for para in paragraphs:
+                                    # Split each paragraph by newlines (preserve intentional line breaks)
+                                    para_lines = [line.strip() for line in para.split('\n') if line.strip()]
+                                    for line in para_lines:
+                                        # Wrap very long lines by sentences for better readability
+                                        if len(line) > 200:
+                                            import re
+                                            sentences = re.split(r'([.!?]\s+)', line)
+                                            current_sentence = ""
+                                            for i in range(0, len(sentences), 2):
+                                                if i + 1 < len(sentences):
+                                                    sentence = sentences[i] + sentences[i+1]
+                                                else:
+                                                    sentence = sentences[i]
+                                                if len(current_sentence) + len(sentence) > 200:
+                                                    if current_sentence:
+                                                        reasoning_lines.append(current_sentence.strip())
+                                                    current_sentence = sentence
+                                                else:
+                                                    current_sentence += sentence
+                                            if current_sentence:
+                                                reasoning_lines.append(current_sentence.strip())
+                                        else:
+                                            reasoning_lines.append(line)
+                                    # Add blank line between paragraphs
+                                    if para != paragraphs[-1]:
+                                        reasoning_lines.append("")
                                 # Blank line before reasoning box
                                 if self.suppress_prefix:
                                     print()
@@ -564,7 +629,7 @@ class RollingMPCSimulator:
                 ["Tunnel Level (L1)", f"{current_state.l1_m:.2f} m", f"[{self.optimizer.constraints.l1_min_m:.1f} - {self.optimizer.constraints.l1_max_m:.1f} m]"],
                 ["Inflow (F1)", f"{current_state.inflow_m3_s:.2f} m³/s", ""],
                 ["Outflow (F2)", f"{current_state.outflow_m3_s:.2f} m³/s", ""],
-                ["Electricity Price", f"{current_state.price_eur_mwh:.1f} EUR/MWh", ""],
+                ["Electricity Price", f"{current_state.price_eur_mwh:.1f} c/kWh", ""],
             ]
             log_table(logger, ["Parameter", "Value", "Range/Status"], system_state_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             
@@ -650,6 +715,21 @@ class RollingMPCSimulator:
                     opt_info_lines.append(f"Quality Level: {forecast_quality['quality_level'].upper()} - Applying safety margins")
             log_boxed(logger, "OPTIMIZATION", opt_info_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
             
+            # Check if we're in critical conditions (disable rotation for safety)
+            l1 = current_state.l1_m
+            l1_range = self.optimizer.constraints.l1_max_m - self.optimizer.constraints.l1_min_m
+            dist_to_min = (l1 - self.optimizer.constraints.l1_min_m) / l1_range
+            dist_to_max = (self.optimizer.constraints.l1_max_m - l1) / l1_range
+            is_critical = (dist_to_min < 0.15 or dist_to_max < 0.15)  # Within 15% of bounds
+            
+            # Calculate hours since last flush (for daily flush constraint)
+            hours_since_last_flush = None
+            if last_flush_time is not None:
+                hours_since_last_flush = (current_time - last_flush_time).total_seconds() / 3600.0
+            else:
+                # If never flushed, use a large value to encourage first flush
+                hours_since_last_flush = 25.0  # Slightly over 24h to trigger flush
+            
             try:
                 opt_result = self.optimizer.solve_optimization(
                     current_state=current_state,
@@ -658,7 +738,8 @@ class RollingMPCSimulator:
                     timeout_seconds=30,
                     strategic_plan=strategic_plan,  # Pass strategic plan to influence optimization
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
-                )
+                    hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
+                    )
                 result_rows = [
                     ["Mode", opt_result.mode.value.upper()],
                     ["Success", "✓" if opt_result.success else "✗"],
@@ -693,6 +774,7 @@ class RollingMPCSimulator:
                     timeout_seconds=10,
                     strategic_plan=strategic_plan,  # Pass strategic plan to fallback too
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
+                    hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
                 )
                 fallback_rows = [
                     ["Mode", opt_result.mode.value.upper()],
@@ -783,7 +865,7 @@ class RollingMPCSimulator:
                         f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
                         f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
                         f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
-                        f"Electricity price={current_state.price_eur_mwh:.1f} EUR/MWh. "
+                        f"Electricity price={current_state.price_eur_mwh:.1f} c/kWh. "
                         f"Pump states: {pump_state_desc}"
                     )
                     
@@ -848,6 +930,16 @@ class RollingMPCSimulator:
                 except Exception as e:
                     logger.warning(f"  Failed to generate explanation: {e}")
             
+            # Update currently running pumps (for reference only)
+            if opt_result.success and opt_result.schedules:
+                for schedule in opt_result.schedules:
+                    if schedule.time_step == 0:
+                        pump_id = schedule.pump_id
+                        if schedule.is_on:
+                            currently_running_pumps.add(pump_id)
+                        else:
+                            currently_running_pumps.discard(pump_id)
+            
             # Store result
             simulation_result = SimulationResult(
                 timestamp=current_time,
@@ -865,6 +957,13 @@ class RollingMPCSimulator:
             baseline_state = self.data_loader.get_state_at_time(current_time)
             if baseline_state:
                 simulation.baseline_l1_trajectory.append(baseline_state.l1_m)
+            
+            # Check if flush occurred (L1 reached flush_target_level_m)
+            # Consider it a flush if L1 is at or below flush target (within 0.1m tolerance)
+            if simulated_l1 <= flush_target + 0.1:
+                if last_flush_time is None or (current_time - last_flush_time).total_seconds() > 3600:  # At least 1h since last flush
+                    last_flush_time = current_time
+                    logger.debug(f"Flush detected: L1={simulated_l1:.3f}m reached flush target {flush_target}m at {current_time}")
             
             # Calculate energy and cost for this time step
             dt_hours = self.reoptimize_interval_minutes / 60.0
@@ -1010,6 +1109,9 @@ class RollingMPCSimulator:
     ) -> ScheduleMetrics:
         """Compute metrics for a single optimization step."""
         if not result.l1_trajectory:
+            # Forecast prices are already in c/kWh in ForecastData
+            min_price = min(forecast.price_eur_mwh)
+            max_price = max(forecast.price_eur_mwh)
             return ScheduleMetrics(
                 total_energy_kwh=result.total_energy_kwh,
                 total_cost_eur=result.total_cost_eur,
@@ -1018,11 +1120,13 @@ class RollingMPCSimulator:
                 max_l1_m=current_state.l1_m,
                 num_pumps_used=len([s for s in result.schedules if s.time_step == 0 and s.is_on]),
                 avg_outflow_m3_s=sum(s.flow_m3_s for s in result.schedules if s.time_step == 0 and s.is_on),
-                price_range_eur_mwh=(min(forecast.price_eur_mwh), max(forecast.price_eur_mwh)),
+                price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
                 risk_level="normal",
                 optimization_mode=result.mode.value,
             )
         
+        min_price = min(forecast.price_eur_mwh)
+        max_price = max(forecast.price_eur_mwh)
         return ScheduleMetrics(
             total_energy_kwh=result.total_energy_kwh,
             total_cost_eur=result.total_cost_eur,
@@ -1031,7 +1135,7 @@ class RollingMPCSimulator:
             max_l1_m=max(result.l1_trajectory),
             num_pumps_used=len(set(s.pump_id for s in result.schedules if s.is_on)),
             avg_outflow_m3_s=sum(s.flow_m3_s for s in result.schedules if s.time_step == 0 and s.is_on),
-            price_range_eur_mwh=(min(forecast.price_eur_mwh), max(forecast.price_eur_mwh)),
+            price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
             risk_level="normal",
             optimization_mode=result.mode.value,
         )
@@ -1102,7 +1206,7 @@ class RollingMPCSimulator:
         optimized_smoothness = float(np.var(optimized_outflows)) if optimized_outflows else 0.0
         baseline_smoothness = float(np.var(baseline_outflows)) if baseline_outflows else 0.0
         
-        # Calculate pump operating hours (fairness)
+        # Calculate pump operating hours
         optimized_pump_hours: Dict[str, float] = {}
         baseline_pump_hours: Dict[str, float] = {}
         dt_hours = self.reoptimize_interval_minutes / 60.0
@@ -1120,14 +1224,46 @@ class RollingMPCSimulator:
                     baseline_pump_hours[pump_id] = baseline_pump_hours.get(pump_id, 0.0) + dt_hours
         
         # Calculate specific energy (kWh/m³)
-        total_optimized_volume = sum(
-            sum(s.flow_m3_s * dt_hours for s in result.optimization_result.schedules if s.time_step == 0 and s.is_on)
-            for result in simulation.results
-        )
-        total_baseline_volume = sum(
-            sum(pump_data['flow_m3_s'] * dt_hours for pump_data in result.baseline_schedule.values() if pump_data['is_on'])
-            for result in simulation.results
-        )
+        # Use mass balance: Total Volume Pumped = Total Inflow - Change in Tunnel Storage
+        # Both systems handle the same inflow, so volumes should be nearly identical
+        # (only differ by tunnel storage changes)
+        
+        # Calculate total inflow over the period
+        total_inflow_volume = 0.0
+        for result in simulation.results:
+            # Get inflow for this time step
+            current_state = self.data_loader.get_state_at_time(result.timestamp)
+            if current_state:
+                total_inflow_volume += current_state.inflow_m3_s * dt_hours * 3600  # Convert to m³
+        
+        # Calculate tunnel storage change
+        # Tunnel area = tunnel_volume / L1_range = 50000 / 8 = 6250 m²
+        tunnel_area_m2 = self.optimizer.constraints.tunnel_volume_m3 / (self.optimizer.constraints.l1_max_m - self.optimizer.constraints.l1_min_m)
+        
+        # Get initial and final L1 for both trajectories
+        if len(simulation.optimized_l1_trajectory) > 0 and len(simulation.baseline_l1_trajectory) > 0:
+            optimized_l1_initial = simulation.optimized_l1_trajectory[0]
+            optimized_l1_final = simulation.optimized_l1_trajectory[-1]
+            baseline_l1_initial = simulation.baseline_l1_trajectory[0]
+            baseline_l1_final = simulation.baseline_l1_trajectory[-1]
+            
+            # Storage change = (L1_final - L1_initial) × tunnel_area
+            optimized_storage_change = (optimized_l1_final - optimized_l1_initial) * tunnel_area_m2
+            baseline_storage_change = (baseline_l1_final - baseline_l1_initial) * tunnel_area_m2
+            
+            # Total volume pumped = inflow - storage_change
+            total_optimized_volume = total_inflow_volume - optimized_storage_change
+            total_baseline_volume = total_inflow_volume - baseline_storage_change
+        else:
+            # Fallback to summing flows if trajectories not available
+            total_optimized_volume = sum(
+                sum(s.flow_m3_s * dt_hours * 3600 for s in result.optimization_result.schedules if s.time_step == 0 and s.is_on)
+                for result in simulation.results
+            )
+            total_baseline_volume = sum(
+                sum(pump_data['flow_m3_s'] * dt_hours * 3600 for pump_data in result.baseline_schedule.values() if pump_data['is_on'])
+                for result in simulation.results
+            )
         
         optimized_specific_energy = (
             total_optimized_energy / total_optimized_volume 

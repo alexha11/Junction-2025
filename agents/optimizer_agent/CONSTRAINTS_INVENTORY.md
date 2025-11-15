@@ -115,13 +115,7 @@ smoothness_obj = ∑_t (outflow[t] - avg_outflow)²
 ```
 - **Weight:** `weights["smoothness"]` (0.05–0.2)
 
-#### 3.3 Pump Fairness (Operating Hours Balance)
-```
-fairness_obj = ∑_p ((hours[p] - avg_hours) / num_pumps)²
-```
-- **Weight:** `weights["fairness"]` (0.1–0.5)
-
-#### 3.4 Safety (L1 Away from Bounds)
+#### 3.3 Safety (L1 Away from Bounds)
 ```
 safety_obj = ∑_t (l1[t] - l1_center)² - 50 × (dist_to_min + dist_to_max)
 ```

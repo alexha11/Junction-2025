@@ -105,15 +105,35 @@ class MetricsCalculator:
                 "PUMP OPERATING HOURS:",
             ])
             
-            # Get all pump IDs
-            all_pumps = set(list(optimized_hours.keys()) + list(baseline_hours.keys()))
+            # Get all pump IDs - include ALL pumps from optimizer, not just ones that were used
+            all_pumps_from_results = set(list(optimized_hours.keys()) + list(baseline_hours.keys()))
+            
+            # Get all pump IDs from optimizer configuration (to include pumps that were never used)
+            all_pumps_from_optimizer = set()
+            if hasattr(self.simulator, 'optimizer') and hasattr(self.simulator.optimizer, 'pumps'):
+                all_pumps_from_optimizer = set(self.simulator.optimizer.pumps.keys())
+            
+            # Combine both sets to ensure all pumps are shown (even if they have 0 hours)
+            all_pumps = all_pumps_from_results | all_pumps_from_optimizer
+            
             for pump_id in sorted(all_pumps):
                 opt_hours = optimized_hours.get(pump_id, 0.0)
                 base_hours = baseline_hours.get(pump_id, 0.0)
                 diff = opt_hours - base_hours
-                diff_pct = (diff / base_hours * 100.0) if base_hours > 0 else 0.0
+                
+                # Calculate percentage change (handle division by zero)
+                if base_hours > 0:
+                    diff_pct = (diff / base_hours * 100.0)
+                    diff_pct_str = f"{diff_pct:>5.1f}"
+                elif opt_hours > 0:
+                    # Baseline is 0 but optimized > 0: show as "N/A"
+                    diff_pct_str = "N/A"
+                else:
+                    # Both are 0: show as 0.0%
+                    diff_pct_str = "0.0"
+                
                 summary_lines.append(
-                    f"  {pump_id}:  Baseline={base_hours:>6.2f}h, Optimized={opt_hours:>6.2f}h, Diff={diff:>6.2f}h ({diff_pct:>5.1f}%)"
+                    f"  {pump_id}:  Baseline={base_hours:>6.2f}h, Optimized={opt_hours:>6.2f}h, Diff={diff:>6.2f}h ({diff_pct_str:>5s}%)"
                 )
             summary_lines.append("")
         
@@ -189,7 +209,8 @@ class MetricsCalculator:
                     max_l1_m=max(simulation.optimized_l1_trajectory) if simulation.optimized_l1_trajectory else 0.0,
                     num_pumps_used=len([h for h in pump_hours.get('optimized', {}).values() if h > 0]),
                     avg_outflow_m3_s=0.0,  # Could calculate from simulation if needed
-                    price_range_eur_mwh=(70.0, 100.0),  # Could extract from data if needed
+                    # 70-100 EUR/MWh → 7-10 c/kWh
+                    price_range_c_per_kwh=(7.0, 10.0),
                     risk_level="normal",
                     optimization_mode="full",
                 )

@@ -18,16 +18,30 @@ from .explainability import LLMExplainer, ScheduleMetrics
 
 
 def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
-    """Create optimizer with pump specs extracted from data."""
-    # Get pump specs from historical data
-    pump_specs_data = data_loader.get_pump_specs_from_data()
+    """Create optimizer with hardcoded pump specifications.
     
-    # Create pump specs
+    These specs represent physical pump capacities (not old system strategy):
+    - Small pumps (1.1, 2.1): ~0.5 m³/s, ~190-195 kW
+    - Big pumps (1.2, 1.3, 1.4, 2.2, 2.3, 2.4): ~1.0 m³/s, ~375-410 kW
+    """
+    # Hardcoded pump specifications (identical hardware within each type)
+    # Small pumps (1.1, 2.1): Same model/capacity
+    # Big pumps (1.2, 1.3, 1.4, 2.2, 2.3, 2.4): Same model/capacity
+    pump_specs_data = {
+        '1.1': {'max_flow_m3_s': 0.5, 'max_power_kw': 200, 'power_vs_l1_slope_kw_per_m': 4.0},
+        '1.2': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+        '1.3': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+        '1.4': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+        '2.1': {'max_flow_m3_s': 0.5, 'max_power_kw': 200, 'power_vs_l1_slope_kw_per_m': 4.0},
+        '2.2': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+        '2.3': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+        '2.4': {'max_flow_m3_s': 1.0, 'max_power_kw': 400, 'power_vs_l1_slope_kw_per_m': 8.0},
+    }
+    
+    # Create pump specs from hardcoded values
     pumps = []
     for pump_id in sorted(pump_specs_data.keys()):
         spec_data = pump_specs_data[pump_id]
-        # Frequency limits are hardware specifications (fixed values)
-        # Only extract operational parameters (flow, power) from data
         pumps.append(
             PumpSpec(
                 pump_id=pump_id,
@@ -37,12 +51,14 @@ def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
                 max_frequency_hz=50.0,  # Fixed hardware specification
                 preferred_freq_min_hz=47.8,
                 preferred_freq_max_hz=49.0,
+                power_vs_l1_slope_kw_per_m=spec_data['power_vs_l1_slope_kw_per_m'],
+                power_l1_reference_m=4.0,
             )
         )
     
     # Create constraints (adjust based on actual data if needed)
     constraints = SystemConstraints(
-        l1_min_m=0.5,
+        l1_min_m=0.0,
         l1_max_m=8.0,
         tunnel_volume_m3=50000.0,  # Approximate - could be calculated from data
         min_pumps_on=1,
@@ -56,7 +72,7 @@ def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
         pumps=pumps,
         constraints=constraints,
         time_step_minutes=15,
-        tactical_horizon_minutes=120,
+        tactical_horizon_minutes=120,  # 2-hour tactical horizon
         strategic_horizon_minutes=1440,
     )
     
@@ -66,12 +82,11 @@ def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
 def main():
     """Main test function."""
     # Load environment variables from .env file
-    # Priority: agent's own .env, then backend/.env, then project root, then current dir
+    # Priority: agent's own .env, then project root, then current dir
     script_dir = Path(__file__).parent
     project_root = script_dir.parent.parent.parent
     env_files = [
         script_dir / ".env",  # Agent's own .env (highest priority)
-        project_root / "backend" / ".env",  # Backend directory
         project_root / ".env",  # Project root
         Path(".env"),  # Current directory
     ]
@@ -147,12 +162,29 @@ def main():
     parser.add_argument(
         "--use-llm",
         action="store_true",
-        help="Use LLM for explanations (requires FEATHERLESS_API_BASE and FEATHERLESS_API_KEY env vars)",
+        help="Use LLM for strategic planning (enabled by default if API keys are available). Use --explanations to also enable per-step explanations.",
+    )
+    parser.add_argument(
+        "--explanations",
+        action="store_true",
+        help="Enable per-step LLM explanations (slow, requires --use-llm)",
+    )
+    parser.add_argument(
+        "--no-strategic-plan",
+        action="store_true",
+        help="Disable LLM strategic planning (faster, but less optimal decisions)",
     )
     parser.add_argument(
         "--show-log-prefix",
         action="store_true",
         help="Show timestamp/module/level prefix on all log lines (default: only first line of tables/boxes)",
+    )
+    parser.add_argument(
+        "--price-type",
+        type=str,
+        choices=["normal", "high"],
+        default="normal",
+        help="Electricity price column to use: 'normal' (everyday) or 'high' (peak variation) (default: normal)",
     )
     
     args = parser.parse_args()
@@ -174,7 +206,8 @@ def main():
         return 1
     
     print(f"Loading data from: {data_file_path}")
-    data_loader = HSYDataLoader(str(data_file_path))
+    print(f"Using electricity price: {args.price_type}")
+    data_loader = HSYDataLoader(str(data_file_path), price_type=args.price_type)
     
     # Get data range
     data_start, data_end = data_loader.get_data_range()
@@ -194,17 +227,21 @@ def main():
     print()
     
     # Create optimizer
-    print("Initializing optimizer with pump specifications from data...")
+    print("Initializing optimizer with hardcoded pump specifications...")
     optimizer = create_optimizer_from_data(data_loader)
-    print(f"  Configured {len(optimizer.pumps)} pumps")
+    print(f"  Configured {len(optimizer.pumps)} pumps (2 small ~0.5 m³/s, 5 big ~1.0 m³/s, 1 offline)")
     print()
     
-    # Initialize LLM explainer early if requested (so it can be used during simulation)
+    # Initialize LLM explainer if API keys are available (for strategic planning by default)
+    # Or if explicitly requested via --use-llm flag
     llm_explainer = None
-    if args.use_llm:
-        api_base = os.getenv("FEATHERLESS_API_BASE")
-        api_key = os.getenv("FEATHERLESS_API_KEY")
-        
+    api_base = os.getenv("FEATHERLESS_API_BASE")
+    api_key = os.getenv("FEATHERLESS_API_KEY")
+    
+    # Enable LLM if explicitly requested OR if API keys are available (for strategic planning)
+    should_use_llm = args.use_llm or (api_base and api_key)
+    
+    if should_use_llm:
         # Log what we found (without exposing the key)
         logger.info(f"Environment check: FEATHERLESS_API_BASE={'set' if api_base else 'not set'}")
         logger.info(f"Environment check: FEATHERLESS_API_KEY={'set' if api_key else 'not set'}")
@@ -215,23 +252,27 @@ def main():
                 api_key=api_key,
                 model=os.getenv("LLM_MODEL", "llama-3.1-8b-instruct"),
             )
-            logger.info("✓ LLM explainer enabled for per-step explanations")
+            logger.info("✓ LLM explainer enabled")
             logger.info(f"  API Base: {api_base}")
             logger.info(f"  Model: {llm_explainer.model}")
-            print("✓ LLM explainer enabled (will generate explanation for each optimization step)")
+            if args.explanations:
+                print("✓ LLM explainer enabled (strategic planning + per-step explanations)")
+            else:
+                print("✓ LLM explainer enabled (strategic planning only, use --explanations for per-step)")
         else:
             missing = []
             if not api_base:
                 missing.append("FEATHERLESS_API_BASE")
             if not api_key:
                 missing.append("FEATHERLESS_API_KEY")
-            logger.warning(f"⚠ LLM requested but {', '.join(missing)} not set")
-            logger.info("Checked .env locations: current directory, project root, backend/, script directory")
-            if env_loaded:
-                logger.info(f"Note: .env file was loaded from {loaded_from}, but it may not contain these variables")
-            print(f"⚠ LLM requested but {', '.join(missing)} not set. Explanations will be skipped.")
+            if args.use_llm:
+                logger.warning(f"⚠ LLM requested but {', '.join(missing)} not set")
+                logger.info("Checked .env locations: current directory, project root, script directory")
+                if env_loaded:
+                    logger.info(f"Note: .env file was loaded from {loaded_from}, but it may not contain these variables")
+                print(f"⚠ LLM requested but {', '.join(missing)} not set. Strategic planning and explanations will be skipped.")
     else:
-        logger.info("LLM explainer: Not requested (use --use-llm flag to enable per-step explanations)")
+        logger.info("LLM explainer: Not available (API keys not found). Use --use-llm to enable if keys are set elsewhere.")
     
     # Create simulator
     simulator = RollingMPCSimulator(
@@ -240,7 +281,8 @@ def main():
         reoptimize_interval_minutes=15,
         forecast_method=args.forecast_method,
         llm_explainer=llm_explainer,
-        generate_explanations=args.use_llm and (llm_explainer is not None),
+        generate_explanations=args.explanations and (llm_explainer is not None),  # Only if explicitly requested
+        generate_strategic_plan=(llm_explainer is not None) and not args.no_strategic_plan,  # Enabled by default if LLM available
         suppress_prefix=not args.show_log_prefix,  # Suppress prefix unless flag is set
     )
     

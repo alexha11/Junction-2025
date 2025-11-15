@@ -77,23 +77,52 @@ class OptimizationAgent(BaseMCPAgent):
         self.forecast_quality_tracker = ForecastQualityTracker()
 
     def _init_optimizer(self):
-        """Initialize the MPC optimizer with pump specifications."""
-        # Default pump specifications (8 pumps as per PRD)
-        pumps = [
-            PumpSpec(
-                pump_id=f"P{i+1}",
-                max_flow_m3_s=1.5,  # Approximate max flow per pump
-                max_power_kw=350.0,
-                min_frequency_hz=47.8,
-                max_frequency_hz=50.0,
-                preferred_freq_min_hz=47.8,
-                preferred_freq_max_hz=49.0,
+        """Initialize the MPC optimizer with pump specifications.
+
+        Uses two pump capacity classes based on Hackathon_HSY_data.xlsx:
+        - Small pumps:  ~0.5 m³/s, 200 kW
+        - Large pumps:  ~1.0 m³/s, 400 kW
+
+        Pump IDs follow the dataset naming and physical grouping:
+        - Line 1: 1.1, 1.2, 1.3, 1.4
+        - Line 2: 2.1, 2.2, 2.3, 2.4
+
+        Mapping (per dataset):
+        - 1.1, 2.1  → small pumps (one per line)
+        - 1.2, 1.3, 1.4, 2.2, 2.3, 2.4 → large pumps
+        """
+        # Define nominal capacities (ceiled from historical data)
+        small_flow_m3_s = 0.5
+        small_power_kw = 200.0
+        large_flow_m3_s = 1.0
+        large_power_kw = 400.0
+
+        pump_ids = ["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4"]
+
+        pumps: list[PumpSpec] = []
+        for pump_id in pump_ids:
+            # Small pumps are the ".1" pumps on each line
+            if pump_id.endswith(".1"):
+                max_flow_m3_s = small_flow_m3_s
+                max_power_kw = small_power_kw
+            else:
+                max_flow_m3_s = large_flow_m3_s
+                max_power_kw = large_power_kw
+
+            pumps.append(
+                PumpSpec(
+                    pump_id=pump_id,
+                    max_flow_m3_s=max_flow_m3_s,
+                    max_power_kw=max_power_kw,
+                    min_frequency_hz=47.8,
+                    max_frequency_hz=50.0,
+                    preferred_freq_min_hz=47.8,
+                    preferred_freq_max_hz=49.0,
+                )
             )
-            for i in range(8)
-        ]
         
         constraints = SystemConstraints(
-            l1_min_m=0.5,
+            l1_min_m=0.0,
             l1_max_m=8.0,
             tunnel_volume_m3=50000.0,  # Approximate tunnel volume
             min_pumps_on=1,
@@ -107,7 +136,7 @@ class OptimizationAgent(BaseMCPAgent):
             pumps=pumps,
             constraints=constraints,
             time_step_minutes=15,
-            tactical_horizon_minutes=120,
+            tactical_horizon_minutes=120,  # 2-hour tactical horizon
             strategic_horizon_minutes=1440,
         )
 
@@ -219,15 +248,16 @@ class OptimizationAgent(BaseMCPAgent):
         except Exception:
             pass
         
-        # Fallback to stub data
+        # Fallback to stub data (use physical pump IDs 1.1-1.4 and 2.1-2.4)
+        default_pump_ids = ["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4"]
         return CurrentState(
             timestamp=datetime.utcnow(),
             l1_m=3.2,
             inflow_m3_s=2.1,
             outflow_m3_s=2.0,
             pump_states=[
-                (f"P{i+1}", i % 2 == 0, 48.0 if i % 2 == 0 else 0.0)
-                for i in range(8)
+                (pid, idx % 2 == 0, 48.0 if idx % 2 == 0 else 0.0)
+                for idx, pid in enumerate(default_pump_ids)
             ],
             price_eur_mwh=72.5,
         )
@@ -356,6 +386,7 @@ class OptimizationAgent(BaseMCPAgent):
     def _compute_metrics(self, result, forecast: ForecastData) -> ScheduleMetrics:
         """Compute metrics for explanation."""
         if not result.l1_trajectory:
+            # Default price range: 70-80 EUR/MWh → 7-8 c/kWh
             return ScheduleMetrics(
                 total_energy_kwh=result.total_energy_kwh,
                 total_cost_eur=result.total_cost_eur,
@@ -364,7 +395,7 @@ class OptimizationAgent(BaseMCPAgent):
                 max_l1_m=8.0,
                 num_pumps_used=1,
                 avg_outflow_m3_s=2.0,
-                price_range_eur_mwh=(70.0, 80.0),
+                price_range_c_per_kwh=(7.0, 8.0),
                 risk_level="normal",
                 optimization_mode=result.mode.value,
             )
@@ -374,6 +405,9 @@ class OptimizationAgent(BaseMCPAgent):
         num_on_steps = len([s for s in result.schedules if s.is_on])
         avg_outflow = total_outflow / max(1, num_on_steps) if num_on_steps > 0 else 0.0
         
+        # Forecast prices are already in c/kWh in ForecastData
+        min_price = min(forecast.price_eur_mwh)
+        max_price = max(forecast.price_eur_mwh)
         return ScheduleMetrics(
             total_energy_kwh=result.total_energy_kwh,
             total_cost_eur=result.total_cost_eur,
@@ -382,7 +416,7 @@ class OptimizationAgent(BaseMCPAgent):
             max_l1_m=max(result.l1_trajectory),
             num_pumps_used=pumps_used,
             avg_outflow_m3_s=avg_outflow,
-            price_range_eur_mwh=(min(forecast.price_eur_mwh), max(forecast.price_eur_mwh)),
+            price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
             risk_level="normal",  # Could be computed from optimizer
             optimization_mode=result.mode.value,
         )
@@ -395,11 +429,12 @@ class OptimizationAgent(BaseMCPAgent):
         strategic_plan: Optional[Any] = None,
     ) -> str:
         """Generate explanation using LLM if available, otherwise fallback."""
-        # Build current state description
+        # Build current state description (price already in c/kWh)
+        price_c_per_kwh = current_state.price_eur_mwh
         current_state_desc = (
             f"Tunnel level: {current_state.l1_m:.2f}m, "
             f"Inflow: {current_state.inflow_m3_s:.2f} m³/s, "
-            f"Price: {current_state.price_eur_mwh:.1f} EUR/MWh"
+            f"Price: {price_c_per_kwh:.1f} c/kWh"
         )
         
         # Log strategy

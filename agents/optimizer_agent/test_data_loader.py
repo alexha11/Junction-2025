@@ -14,9 +14,15 @@ from .optimizer import CurrentState, ForecastData
 class HSYDataLoader:
     """Load and parse Hackathon_HSY_data.xlsx for testing."""
 
-    def __init__(self, excel_file: str):
-        """Initialize data loader with Excel file path."""
+    def __init__(self, excel_file: str, price_type: str = 'normal'):
+        """Initialize data loader with Excel file path.
+        
+        Args:
+            excel_file: Path to Excel file
+            price_type: 'normal' or 'high' for electricity price column
+        """
         self.excel_file = excel_file
+        self.price_type = price_type  # 'normal' or 'high'
         self.df: Optional[pd.DataFrame] = None
         self._load_data()
 
@@ -73,7 +79,7 @@ class HSYDataLoader:
         # - F1 (Inflow) is in m³/15min -> convert to m³/s (divide by 15*60 = 900)
         # - F2 (Outflow) is in m³/15min -> convert to m³/s
         # - Pump flows are in m³/h -> convert to m³/s (divide by 3600)
-        # - Electricity price is in EUR/kWh -> convert to EUR/MWh (multiply by 1000)
+        # - Electricity price column is already provided in c/kWh
         
         if 'Inflow to tunnel F1' in self.df.columns:
             self.df['F1_m3_s'] = self.df['Inflow to tunnel F1'] / 900.0  # m³/15min to m³/s
@@ -87,9 +93,21 @@ class HSYDataLoader:
             if flow_col in self.df.columns:
                 self.df[f'{flow_col}_m3_s'] = self.df[flow_col] / 3600.0  # m³/h to m³/s
         
-        # Convert electricity price from EUR/kWh to EUR/MWh
-        if 'Electricity price 2: normal' in self.df.columns:
-            self.df['Price_EUR_MWh'] = self.df['Electricity price 2: normal'] * 1000.0
+        # Electricity price: support both "high" and "normal" columns
+        # Select based on price_type parameter
+        # Both are already in c/kWh
+        if self.price_type == 'high' and 'Electricity price 1: high' in self.df.columns:
+            self.df['Price_c_per_kWh'] = self.df['Electricity price 1: high']
+        elif 'Electricity price 2: normal' in self.df.columns:
+            self.df['Price_c_per_kWh'] = self.df['Electricity price 2: normal']
+        else:
+            # Fallback: try to use whatever is available
+            if 'Electricity price 1: high' in self.df.columns:
+                self.df['Price_c_per_kWh'] = self.df['Electricity price 1: high']
+            elif 'Electricity price 2: normal' in self.df.columns:
+                self.df['Price_c_per_kWh'] = self.df['Electricity price 2: normal']
+            else:
+                self.df['Price_c_per_kWh'] = 0.0
 
     def get_state_at_time(self, timestamp: datetime, include_pump_states: bool = False) -> Optional[CurrentState]:
         """Get CurrentState object at given timestamp.
@@ -122,12 +140,8 @@ class HSYDataLoader:
                 flow_col = f'Pump flow {pump_num}'
                 freq_col = f'Pump frequency {pump_num}'
                 
-                # Map pump ID from data format (1.1, 1.2) to optimizer format (P1, P2, etc.)
-                # Pumps 1.1-1.4 become P1-P4, pumps 2.1-2.4 become P5-P8
-                if pump_num.startswith('1.'):
-                    pump_id = f"P{int(pump_num.split('.')[1])}"
-                else:  # 2.x
-                    pump_id = f"P{int(pump_num.split('.')[1]) + 4}"
+                # Use dataset pump ID directly
+                pump_id = pump_num
                 
                 flow = row.get(f'{flow_col}_m3_s', row.get(flow_col, 0.0))
                 freq = row.get(freq_col, 0.0)
@@ -136,7 +150,7 @@ class HSYDataLoader:
                 pump_states.append((pump_id, bool(is_on), float(freq)))
         else:
             # Default: all pumps off (will be set by optimizer)
-            for pump_id in ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8']:
+            for pump_id in ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '2.3', '2.4']:
                 pump_states.append((pump_id, False, 0.0))
         
         return CurrentState(
@@ -145,7 +159,8 @@ class HSYDataLoader:
             inflow_m3_s=float(row.get('F1_m3_s', row.get('Inflow to tunnel F1', 0.0) / 900.0)),
             outflow_m3_s=float(row.get('F2_m3_s', row.get('Sum of pumped flow to WWTP F2', 0.0) / 900.0)),
             pump_states=pump_states,  # Empty/default by default - represents old strategy violations
-            price_eur_mwh=float(row.get('Price_EUR_MWh', row.get('Electricity price 2: normal', 0.0) * 1000.0)),
+            # Store price in c/kWh (for optimizer we still use the same field name)
+            price_eur_mwh=float(row.get('Price_c_per_kWh', row.get('Electricity price 2: normal', 0.0))),
         )
 
     def get_forecast_from_time(
@@ -177,16 +192,16 @@ class HSYDataLoader:
             forecast_df = self.df.iloc[start_idx:end_idx]
             timestamps = forecast_df.index.to_list()
             inflows = forecast_df['F1_m3_s'].fillna(0.0).tolist()
-            prices = forecast_df['Price_EUR_MWh'].fillna(0.0).tolist()
+            prices = forecast_df['Price_c_per_kWh'].fillna(0.0).tolist()
             
         elif method == 'persistence':
             # Use last known value
             if start_idx > 0:
                 last_inflow = self.df.iloc[start_idx - 1].get('F1_m3_s', 0.0)
-                last_price = self.df.iloc[start_idx - 1].get('Price_EUR_MWh', 0.0)
+                last_price = self.df.iloc[start_idx - 1].get('Price_c_per_kWh', 0.0)
             else:
                 last_inflow = self.df.iloc[0].get('F1_m3_s', 0.0)
-                last_price = self.df.iloc[0].get('Price_EUR_MWh', 0.0)
+                last_price = self.df.iloc[0].get('Price_c_per_kWh', 0.0)
             
             timestamps = [
                 timestamp + pd.Timedelta(minutes=15 * i)
@@ -228,11 +243,8 @@ class HSYDataLoader:
         
         schedule = {}
         for pump_num in ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '2.3', '2.4']:
-            # Map pump ID
-            if pump_num.startswith('1.'):
-                pump_id = f"P{int(pump_num.split('.')[1])}"
-            else:
-                pump_id = f"P{int(pump_num.split('.')[1]) + 4}"
+            # Use dataset pump ID directly (1.1-1.4, 2.1-2.4)
+            pump_id = pump_num
             
             flow_col = f'Pump flow {pump_num}'
             freq_col = f'Pump frequency {pump_num}'
@@ -279,17 +291,24 @@ class HSYDataLoader:
         return (start_dt, end_dt)
 
     def get_pump_specs_from_data(self) -> dict:
-        """Extract pump specifications from historical data."""
+        """Extract pump specifications from historical data.
+        
+        DEPRECATED: Pump specs are now hardcoded in test_optimizer_with_data.py
+        to avoid learning from old system's strategy decisions.
+        
+        This method extracted pump specs from historical operational data, but that
+        created circular reasoning (calibrating new strategy from old bad strategy).
+        Now we use hardcoded physical pump capacities instead.
+        
+        Kept for reference only.
+        """
         if self.df is None:
             return {}
         
         specs = {}
         for pump_num in ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '2.3', '2.4']:
-            # Map pump ID
-            if pump_num.startswith('1.'):
-                pump_id = f"P{int(pump_num.split('.')[1])}"
-            else:
-                pump_id = f"P{int(pump_num.split('.')[1]) + 4}"
+            # Use dataset pump ID directly (1.1-1.4, 2.1-2.4)
+            pump_id = pump_num
             
             flow_col = f'Pump flow {pump_num}'
             power_col = f'Pump power uptake {pump_num}'
@@ -307,11 +326,74 @@ class HSYDataLoader:
             min_freq_hz = 47.8  # Standard minimum operating frequency for pumps
             max_freq_hz = 50.0  # Standard maximum operating frequency for pumps
             
+            # Analyze power vs L1 relationship from historical data
+            # Power = f(flow, frequency, L1/lifting_height, efficiency)
+            # Higher L1 = lower lifting height = less power needed (if pumping to fixed level above L1)
+            # Extract relationship: when pump is running, how does power vary with L1?
+            l1_col = 'Water level in tunnel L1'
+            power_vs_l1_slope = 0.0  # kW per meter of L1 change
+            power_vs_l1_base = max_power_kw * 0.8  # Base power at reference L1
+            
+            if (power_col in self.df.columns and l1_col in self.df.columns and 
+                freq_col in self.df.columns):
+                # Filter to pump-on conditions (flow > 0 or frequency > 10 Hz)
+                pump_on_mask = (
+                    (self.df[power_col] > 0.1) | 
+                    (self.df[freq_col] > 10.0)
+                )
+                
+                if pump_on_mask.sum() > 10:  # Need sufficient data points
+                    pump_data = self.df[pump_on_mask].copy()
+                    
+                    # Get flow column (convert if needed)
+                    flow_data = (pump_data[f'{flow_col}_m3_s'] 
+                               if f'{flow_col}_m3_s' in pump_data.columns
+                               else pump_data[flow_col] / 3600.0)
+                    
+                    # Analyze power vs L1 for similar flow/frequency conditions
+                    # For similar flow and frequency, power should decrease with L1
+                    # (higher L1 = less lifting height needed)
+                    try:
+                        # Calculate correlation between power and L1 at similar operating points
+                        # Group by frequency bins to normalize for frequency effects
+                        freq_bins = pd.cut(pump_data[freq_col], bins=5, labels=False)
+                        
+                        # For each frequency bin, check if power decreases with L1
+                        for bin_idx in range(5):
+                            bin_mask = (freq_bins == bin_idx) & (flow_data > 0.1)
+                            if bin_mask.sum() > 5:
+                                bin_data = pump_data[bin_mask]
+                                bin_power = bin_data[power_col]
+                                bin_l1 = bin_data[l1_col]
+                                
+                                # Simple linear fit: power = base - slope * L1
+                                # (negative slope: higher L1 = less power)
+                                if bin_l1.std() > 0.1:  # Need variation in L1
+                                    correlation = bin_power.corr(bin_l1)
+                                    if correlation < -0.3:  # Significant negative correlation
+                                        # Estimate slope (power change per meter of L1)
+                                        slope_estimate = (bin_power.max() - bin_power.min()) / (
+                                            bin_l1.max() - bin_l1.min() + 1e-6
+                                        )
+                                        if slope_estimate < 0:  # Power decreases with L1
+                                            power_vs_l1_slope = abs(slope_estimate) * 0.5  # Conservative estimate
+                                            break
+                    except Exception:
+                        # If analysis fails, use default (no L1 correction)
+                        pass
+            
+            # If no significant correlation found, use small default slope
+            # Typical: ~1-5% power reduction per meter of L1 increase
+            if power_vs_l1_slope < 0.1:
+                power_vs_l1_slope = max_power_kw * 0.02  # ~2% per meter (conservative)
+            
             specs[pump_id] = {
                 'max_flow_m3_s': float(max_flow_m3_s),
                 'max_power_kw': float(max_power_kw),
                 'max_frequency_hz': max_freq_hz,  # Fixed hardware specification
                 'min_frequency_hz': min_freq_hz,  # Fixed hardware specification
+                'power_vs_l1_slope_kw_per_m': float(power_vs_l1_slope),  # Power reduction per meter of L1 increase
+                'power_l1_reference_m': 4.0,  # Reference L1 level for power calculation
             }
         
         return specs

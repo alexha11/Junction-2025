@@ -24,7 +24,7 @@ Design an **MPC-style optimizer agent** for the Blominmäki hackathon that:
 - Optimize not just total kWh, but also **specific energy (kWh/m³)** and time spent inside each pump’s **preferred operating range (POR)** on the pump curves (high efficiency, low cavitation risk).
 - Keep a clear distinction between:
   - _What the system must never do_ (hard constraints)
-  - _What we prefer_ (soft constraints, cost, fairness, specific energy).
+  - _What we prefer_ (soft constraints, cost, specific energy).
 
 ---
 
@@ -57,7 +57,7 @@ Design an **MPC-style optimizer agent** for the Blominmäki hackathon that:
 - Explicitly list constraints and priorities from the brief:
   - Safety: L1 range, pumps never all off, limited start/stop frequency
   - Energy & efficiency: minimize kWh and kWh/m³, operate near efficient points
-  - Smoothness & fairness: F2 as constant as possible, similar working hours per pump, periodic tunnel flushing.
+  - Smoothness: F2 as constant as possible, periodic tunnel flushing.
 
 ### Phase 2 – Design the Multi-Agent Control Architecture (Junction Platform Light)
 
@@ -93,9 +93,8 @@ Design an **MPC-style optimizer agent** for the Blominmäki hackathon that:
   - Minimize **specific energy** (kWh/m³) and time spent outside the preferred operating range on the pump curves.
   - Keep outflow F2 as smooth and near‑constant as possible.
   - Encourage operation near efficient pump points (good kWh/m³) and avoid operating regimes associated with cavitation or harmful transients.
-  - Balance working hours across pumps so no single pump is overused.
 - Decide whether to use:
-  - A **single combined objective** (weighted sum of cost, smoothness, fairness, etc.), or
+  - A **single combined objective** (weighted sum of cost, smoothness, etc.), or
   - A **two-stage approach** (feasibility and safety first, then cost/smoothness optimization within the feasible set).
 
 ### Phase 4 – Dual-Horizon Strategy (24h + 2h)
@@ -168,7 +167,7 @@ Design an **MPC-style optimizer agent** for the Blominmäki hackathon that:
   - (If you include any PV or tariff logic) self‑consumption %, imported vs exported energy, and €/m³ as in techno‑economic dispatch studies.
 - Iterate on:
   - Constraint formulations that are too tight/loose for the data.
-  - Weighting between cost, smoothness, flushing, and fairness.
+  - Weighting between cost, smoothness, and flushing.
   - Any heuristics you add for edge cases.
 
 ### Phase 10 – Integration and Evolution

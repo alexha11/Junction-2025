@@ -41,23 +41,26 @@ class PumpSpec:
     max_frequency_hz: float = 50.0
     preferred_freq_min_hz: float = 47.8
     preferred_freq_max_hz: float = 49.0
+    # Power model parameters (for L1/lifting height correction)
+    power_vs_l1_slope_kw_per_m: float = 0.0  # Power reduction per meter of L1 increase (negative correlation: higher L1 = less power)
+    power_l1_reference_m: float = 4.0  # Reference L1 level for power calculation
 
 
 @dataclass
 class SystemConstraints:
     """Constraints for the system."""
-    l1_min_m: float = 0.5
+    l1_min_m: float = 0.0
     l1_max_m: float = 8.0
     tunnel_volume_m3: float = 50000.0  # Approximate tunnel volume
     min_pumps_on: int = 1  # At least one pump always on
-    min_pump_on_duration_minutes: int = 120  # Minimum 2h on duration
-    min_pump_off_duration_minutes: int = 120  # Minimum 2h off duration
+    min_pump_on_duration_minutes: int = 120  # Minimum 2h on (hardware protection)
+    min_pump_off_duration_minutes: int = 120  # Minimum 2h off (hardware protection)
     flush_frequency_days: int = 1  # Flush once per day
-    flush_target_level_m: float = 0.5  # Flush to near minimum
-    # Soft constraint options
-    allow_l1_violations: bool = True  # Allow minor L1 violations with penalties
-    l1_violation_tolerance_m: float = 0.5  # Maximum allowed violation (default 0.5m)
-    l1_violation_penalty: float = 1000.0  # Penalty weight for violations (high = strict)
+    flush_target_level_m: float = 0.5  # Flush to 0.5 m (near minimum for cleaning)
+    # Soft constraint options (deprecated - L1 bounds are now hard constraints)
+    allow_l1_violations: bool = False  # L1 bounds are hard constraints (must never be violated)
+    l1_violation_tolerance_m: float = 0.5  # Maximum allowed violation (not used when allow_l1_violations=False)
+    l1_violation_penalty: float = 1000.0  # Penalty weight for violations (not used when allow_l1_violations=False)
 
 
 @dataclass
@@ -113,7 +116,7 @@ class MPCOptimizer:
         pumps: List[PumpSpec],
         constraints: SystemConstraints,
         time_step_minutes: int = 15,
-        tactical_horizon_minutes: int = 120,  # 2h tactical
+        tactical_horizon_minutes: int = 360,  # 6h tactical (improved from 2h)
         strategic_horizon_minutes: int = 1440,  # 24h strategic
     ):
         self.pumps = {p.pump_id: p for p in pumps}
@@ -168,28 +171,24 @@ class MPCOptimizer:
             RiskLevel.LOW: {
                 "cost": 1.0,
                 "smoothness": 0.2,
-                "fairness": 0.5,  # Increased for better pump balancing
                 "safety_margin": 0.1,
-                "specific_energy": 0.3,  # Added explicit specific energy objective
+                "specific_energy": 0.3,
             },
             RiskLevel.NORMAL: {
                 "cost": 0.8,
                 "smoothness": 0.2,
-                "fairness": 0.4,
                 "safety_margin": 0.3,
                 "specific_energy": 0.2,
             },
             RiskLevel.HIGH: {
                 "cost": 0.4,
                 "smoothness": 0.1,
-                "fairness": 0.3,
                 "safety_margin": 0.8,
                 "specific_energy": 0.1,
             },
             RiskLevel.CRITICAL: {
                 "cost": 0.1,
                 "smoothness": 0.05,
-                "fairness": 0.1,
                 "safety_margin": 2.0,
                 "specific_energy": 0.05,
             },
@@ -455,10 +454,11 @@ class MPCOptimizer:
         current_state: CurrentState,
         forecast: ForecastData,
         mode: OptimizationMode = OptimizationMode.FULL,
-        timeout_seconds: int = 30,
+        timeout_seconds: Optional[int] = None,  # Auto-calculate based on horizon if None
         strategic_plan: Optional[Any] = None,  # Optional LLM-generated StrategicPlan
         forecast_quality: Optional[Dict[str, Any]] = None,  # Optional forecast quality metrics
         emergency_response: Optional[Any] = None,  # Optional EmergencyResponse from LLM
+        hours_since_last_flush: Optional[float] = None,  # Hours since last flush (for daily flush constraint)
     ) -> OptimizationResult:
         """Solve the optimization problem using OR-Tools.
         
@@ -471,6 +471,13 @@ class MPCOptimizer:
             forecast_quality: Optional dict with 'quality_level' ('good', 'fair', 'poor'),
                 'inflow_mae', 'price_mae', 'l1_mae' for forecast quality assessment
         """
+        # Auto-calculate timeout based on horizon size if not provided
+        if timeout_seconds is None:
+            num_steps = len(forecast.timestamps) if forecast.timestamps else self.tactical_steps
+            # Base timeout: 15s per hour of horizon (minimum 30s)
+            timeout_seconds = max(30, int(num_steps * 15 / 4))  # 15 min steps -> hours
+            logger.debug(f"Auto-calculated timeout: {timeout_seconds}s for {num_steps} steps ({num_steps * 15 / 60:.1f}h horizon)")
+        
         start_time = time.time()
         
         # Adjust constraints based on forecast quality if provided
@@ -520,7 +527,9 @@ class MPCOptimizer:
             # Try full optimization first
             if mode == OptimizationMode.FULL:
                 result = self._solve_full_optimization(
-                    current_state, forecast, weights, timeout_seconds, strategic_plan
+                    current_state, forecast, weights, timeout_seconds, 
+                    strategic_plan=strategic_plan,
+                    hours_since_last_flush=hours_since_last_flush,
                 )
                 if result.success:
                     solve_time = time.time() - start_time
@@ -570,6 +579,7 @@ class MPCOptimizer:
         weights: dict,
         timeout_seconds: int,
         strategic_plan: Optional[Any] = None,
+        hours_since_last_flush: Optional[float] = None,
     ) -> OptimizationResult:
         """Solve full optimization with all constraints."""
         import logging
@@ -620,6 +630,26 @@ class MPCOptimizer:
             logger.debug(f"Failed to set SCIP thread count: {e}")
         
         logger.debug(f"SCIP solver: Parallel mode enabled with {num_threads} threads (Option C speedup)")
+        
+        # Optimize SCIP solver settings for faster solving (especially for 6-hour horizon)
+        try:
+            # Set optimality gap (1% is acceptable for faster solving)
+            solver.SetSolverSpecificParametersAsString("limits/gap = 0.01")
+        except Exception as e:
+            logger.debug(f"Failed to set SCIP gap limit: {e}")
+        
+        # Try additional speedup parameters (may not be available in all SCIP versions)
+        try:
+            # Enable aggressive presolving (if parameter exists)
+            solver.SetSolverSpecificParametersAsString("presolving/maxrounds = -1")
+        except Exception:
+            pass  # Parameter may not exist, ignore
+        
+        try:
+            # Set emphasis on feasibility over optimality (if parameter exists)
+            solver.SetSolverSpecificParametersAsString("limits/time = 1")  # This is set via SetTimeLimit, but try anyway
+        except Exception:
+            pass
         
         solver.SetTimeLimit(timeout_seconds * 1000)  # Convert to milliseconds
         
@@ -724,10 +754,16 @@ class MPCOptimizer:
                     pump_flow[pid][t] <= (pump_freq[pid][t] * max_freq_inv) * pump_spec.max_flow_m3_s * 1.1
                 )
                 
-                # Power model: improved linear approximation of cubic relationship
-                # Real pump power ∝ freq³, but linear solver requires linear constraints
-                # Use improved approximation: power ≈ base + slope * (freq - min_freq)
-                # Where slope is steeper to approximate cubic behavior
+                # Power model: improved approximation accounting for:
+                # 1. Frequency (cubic relationship: P ∝ f³)
+                # 2. L1 / Lifting height (higher L1 = less lifting height needed = less power)
+                # 3. Flow and efficiency (embedded in max_power_kw from pump curves)
+                # 
+                # Power = f(frequency) - f(L1) + base
+                # Where:
+                #   f(frequency) ≈ base_power + slope * (freq - min_freq) [cubic approximation]
+                #   f(L1) = power_vs_l1_slope * (L1 - L1_reference) [lifting height effect]
+                #   Higher L1 = less power needed (negative slope in data analysis)
                 
                 # Safety check: ensure max_frequency_hz is valid before division
                 if pump_spec.max_frequency_hz < 1.0:
@@ -735,7 +771,7 @@ class MPCOptimizer:
                 min_freq_ratio = pump_spec.min_frequency_hz / pump_spec.max_frequency_hz
                 # Base power at minimum frequency (approximate cubic: ~85% at 95% freq)
                 base_power_ratio = min_freq_ratio ** 2.5  # 0.95^2.5 ≈ 0.87
-                base_power = pump_spec.max_power_kw * base_power_ratio
+                base_power_freq = pump_spec.max_power_kw * base_power_ratio
                 
                 # Power slope: approximate cubic by using steeper linear slope
                 # At 50Hz, power = max_power
@@ -743,23 +779,55 @@ class MPCOptimizer:
                 # Linear slope = (max - base) / (1 - min_ratio)
                 denominator = 1.0 - min_freq_ratio
                 if abs(denominator) < 0.01:  # Avoid division by zero
-                    power_slope = (pump_spec.max_power_kw - base_power) / 0.5  # Fallback
+                    power_slope = (pump_spec.max_power_kw - base_power_freq) / 0.5  # Fallback
                 else:
-                    power_slope = (pump_spec.max_power_kw - base_power) / denominator
-                
-                # Power increases with frequency above minimum
-                # Power = base + slope * (freq_ratio - min_freq_ratio) when pump is on
-                # Use: power >= base * pump_on + (freq - min_freq) * slope
-                # When pump is on: freq is between min_freq and max_freq
-                # freq_ratio = freq / max_freq, so freq_ratio is between min_freq_ratio and 1.0
+                    power_slope = (pump_spec.max_power_kw - base_power_freq) / denominator
                 
                 # Simplified linear approximation with adjusted slope for cubic behavior
                 # Scale slope by 1.5x to better approximate cubic curve in the operating range
                 adjusted_slope = power_slope * 1.5
                 
-                # Power lower bound: base power when on, plus additional based on frequency
-                # power >= base * pump_on + (freq_ratio - min_freq_ratio) * slope when pump is on
+                # Power vs frequency component
                 freq_excess = pump_freq[pid][t] * max_freq_inv - min_freq_ratio * pump_on[pid][t]
+                
+                # Power vs L1 component (lifting height correction)
+                # Higher L1 = less lifting height needed = less power
+                # Power correction: power_reduction = slope * (L1[t] - L1_reference)
+                # Since L1[t] is a variable, we can use it directly in linear constraints
+                l1_reference = pump_spec.power_l1_reference_m
+                l1_slope = pump_spec.power_vs_l1_slope_kw_per_m
+                
+                # Power reduction from L1 (lifting height effect)
+                # When L1 is higher than reference, less power needed
+                # power_l1_reduction = l1_slope * (l1[t] - l1_reference)
+                # This is linear and can be added directly to constraints
+                
+                # Total power = power_from_freq - power_l1_reduction
+                # But we need to be careful: l1_slope * l1[t] creates a bilinear term if multiplied by pump_on
+                # Approximation: apply L1 correction only when pump is on
+                # Use conservative approximation: apply correction factor based on expected L1
+                # For now, use forecasted L1 to estimate correction (small change assumption)
+                if l1_slope > 0.01:  # Only apply if significant slope
+                    # Estimate L1 at time t (approximate from forecast)
+                    expected_l1 = current_state.l1_m  # Start from current
+                    dt_sec = self.time_step_minutes * 60
+                    for s in range(t + 1):
+                        if s < len(forecast.inflow_m3_s):
+                            # Approximate outflow as average (conservative)
+                            avg_outflow = sum(self.pumps[p].max_flow_m3_s for p in pump_ids) * 0.5
+                            expected_l1 += (forecast.inflow_m3_s[s] - avg_outflow) * dt_sec / self.constraints.tunnel_volume_m3
+                    
+                    # L1 correction (subtract from power when L1 is high)
+                    l1_correction = l1_slope * (expected_l1 - l1_reference)
+                    # Clamp correction to reasonable range (±20% of base power)
+                    max_correction = base_power_freq * 0.2
+                    l1_correction = max(-max_correction, min(max_correction, l1_correction))
+                    
+                    # Apply L1 correction: subtract from frequency-based power
+                    base_power = base_power_freq - l1_correction
+                else:
+                    # No L1 correction (slope too small)
+                    base_power = base_power_freq
                 
                 solver.Add(
                     pump_power[pid][t] >= base_power * pump_on[pid][t] + 
@@ -770,9 +838,10 @@ class MPCOptimizer:
                     freq_excess * adjusted_slope * 1.15
                 )
                 
-                # Bounds: power must be between base and max when on
+                # Bounds: power must be between adjusted base and max when on
+                adjusted_min_power = max(0.1 * pump_spec.max_power_kw, base_power * 0.8)
                 solver.Add(
-                    pump_power[pid][t] >= base_power * pump_on[pid][t]
+                    pump_power[pid][t] >= adjusted_min_power * pump_on[pid][t]
                 )
                 solver.Add(
                     pump_power[pid][t] <= pump_spec.max_power_kw * pump_on[pid][t]
@@ -869,17 +938,18 @@ class MPCOptimizer:
         # Objective: minimize weighted combination
         cost_obj = 0.0
         smoothness_obj = 0.0
-        fairness_obj = 0.0
         safety_obj = 0.0
         specific_energy_obj = 0.0
+        flush_obj = 0.0  # Flush objective (encourage daily flush)
         
         # Cost: total energy cost
+        # price_eur_mwh field is now interpreted as c/kWh from inputs
         for t in range(num_steps):
-            price = forecast.price_eur_mwh[t] / 1000.0  # Convert to EUR/kWh
+            price_eur_per_kwh = forecast.price_eur_mwh[t] / 100.0  # c/kWh -> EUR/kWh
             dt_hours = self.time_step_minutes / 60.0
             for pid in pump_ids:
                 energy_kwh = pump_power[pid][t] * dt_hours
-                cost_obj += energy_kwh * price
+                cost_obj += energy_kwh * price_eur_per_kwh
         
         # Smoothness: minimize F2 variance (linear approximation)
         # Use pairwise deviation instead of deviation from mean (linear programming compatible)
@@ -895,22 +965,6 @@ class MPCOptimizer:
                 solver.Add(diff_var >= outflow_vars[t] - outflow_vars[t + 1])
                 solver.Add(diff_var >= outflow_vars[t + 1] - outflow_vars[t])
                 smoothness_obj += diff_var
-        
-        # Fairness: balance pump hours more aggressively
-        # Use pairwise deviation instead of deviation from mean (linear programming compatible)
-        # Minimize differences between pump operating hours
-        pump_hours = [
-            sum(pump_on[pid][t] for t in range(num_steps)) for pid in pump_ids
-        ]
-        if len(pump_hours) > 1:
-            # Minimize deviation between pairs of pumps
-            for i in range(len(pump_hours)):
-                for j in range(i + 1, len(pump_hours)):
-                    # Linear approximation: use absolute difference between pump pairs
-                    diff_var = solver.NumVar(0.0, solver.infinity(), f"fairness_diff_{i}_{j}")
-                    solver.Add(diff_var >= pump_hours[i] - pump_hours[j])
-                    solver.Add(diff_var >= pump_hours[j] - pump_hours[i])
-                    fairness_obj += diff_var
         
         # Specific energy: minimize kWh/m³ (encourage efficient operation)
         # Linear approximation: minimize deviation from target specific energy ratio
@@ -959,16 +1013,52 @@ class MPCOptimizer:
                     self.constraints.l1_violation_penalty * l1_violation_above[t]
                 )
         
+        # Flush objective: encourage reaching flush_target_level_m once per day
+        # Stronger when it's been longer since last flush, and during low inflow + cheap prices
+        if hours_since_last_flush is not None and hours_since_last_flush >= 20:  # Near 24h mark
+            # Calculate average inflow and price in forecast
+            avg_inflow = np.mean(forecast.inflow_m3_s) if forecast.inflow_m3_s else 0.0
+            avg_price = np.mean(forecast.price_eur_mwh) if forecast.price_eur_mwh else 0.0
+            price_std = np.std(forecast.price_eur_mwh) if len(forecast.price_eur_mwh) > 1 else 0.0
+            
+            # Flush urgency increases with hours since last flush (0-1 scale, max at 24h+)
+            flush_urgency = min(1.0, (hours_since_last_flush - 20) / 4.0)  # 0 at 20h, 1.0 at 24h+
+            
+            for t in range(num_steps):
+                # Check if this is a good time to flush (low inflow, cheap price)
+                inflow = forecast.inflow_m3_s[t] if t < len(forecast.inflow_m3_s) else avg_inflow
+                price = forecast.price_eur_mwh[t] if t < len(forecast.price_eur_mwh) else avg_price
+                
+                # Good flush conditions: low inflow (< average) and cheap price (< average)
+                is_low_inflow = inflow < avg_inflow * 0.8 if avg_inflow > 0 else False
+                is_cheap_price = price < (avg_price - 0.3 * price_std) if price_std > 0 else price < avg_price
+                flush_opportunity = 1.0 if (is_low_inflow and is_cheap_price) else 0.3
+                
+                # Encourage L1 to reach flush_target_level_m
+                # Penalty for being above flush target (want to pump down to flush level)
+                # Only penalize if L1 is above flush target
+                flush_penalty_var = solver.NumVar(0.0, solver.infinity(), f"flush_penalty_{t}")
+                # flush_penalty_var >= max(0, l1[t] - flush_target)
+                solver.Add(flush_penalty_var >= l1[t] - self.constraints.flush_target_level_m)
+                solver.Add(flush_penalty_var >= 0.0)
+                
+                # Weight: higher when urgent, during good conditions, and when price is cheap
+                flush_penalty_weight = flush_urgency * flush_opportunity * (1.0 / max(price / 100.0, 0.1))  # Inverse price weighting
+                flush_obj += flush_penalty_weight * flush_penalty_var
+        
         # Violation penalty is always high priority (unless violations are fully allowed)
         violation_weight = self.constraints.l1_violation_penalty if self.constraints.allow_l1_violations else 0.0
+        
+        # Flush weight: moderate priority, increases with urgency
+        flush_weight = 0.5 if hours_since_last_flush and hours_since_last_flush >= 20 else 0.0
         
         total_obj = (
             weights["cost"] * cost_obj +
             weights["smoothness"] * smoothness_obj +
-            weights["fairness"] * fairness_obj +
             weights["safety_margin"] * safety_obj +
             weights.get("specific_energy", 0.0) * specific_energy_obj +
-            violation_weight * violation_penalty_obj
+            violation_weight * violation_penalty_obj +
+            flush_weight * flush_obj
         )
         
         solver.Minimize(total_obj)
@@ -1036,7 +1126,8 @@ class MPCOptimizer:
                         dt_hours = self.time_step_minutes / 60.0
                         energy = power * dt_hours
                         total_energy += energy
-                        total_cost += energy * (forecast.price_eur_mwh[t] / 1000.0)
+                        # price_eur_mwh is in c/kWh → convert to EUR/kWh
+                        total_cost += energy * (forecast.price_eur_mwh[t] / 100.0)
             
             solve_time = time.time() - start_time
             
@@ -1154,7 +1245,8 @@ class MPCOptimizer:
                 dt_hours = self.time_step_minutes / 60.0
                 energy = power * dt_hours
                 total_energy += energy
-                total_cost += energy * (forecast.price_eur_mwh[t] / 1000.0)
+                # price_eur_mwh is in c/kWh → convert to EUR/kWh
+                total_cost += energy * (forecast.price_eur_mwh[t] / 100.0)
             
             # Add off pumps
             for pid in pump_ids:
