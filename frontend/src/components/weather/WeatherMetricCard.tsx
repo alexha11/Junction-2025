@@ -23,9 +23,9 @@ const WeatherMetricCard = ({
   description,
   trend = "flat",
 }: Props) => (
-  <div className="rounded-3xl border border-white/10 bg-slate-900/50 p-5 shadow-card">
+  <div className="glass-card space-y-3">
     <p className="text-xs uppercase tracking-widest text-slate-400">{label}</p>
-    <div className="mt-2 flex items-end gap-2">
+    <div className="flex items-end gap-2">
       <span className="text-3xl font-semibold text-white">{value}</span>
       <span
         className={`text-xs font-semibold uppercase tracking-widest ${trendColors[trend]}`}
@@ -34,7 +34,7 @@ const WeatherMetricCard = ({
       </span>
     </div>
     {description && (
-      <p className="mt-1 text-sm text-slate-400">{description}</p>
+      <p className="text-sm text-slate-400">{description}</p>
     )}
   </div>
 );

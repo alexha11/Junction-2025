@@ -61,12 +61,12 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
       ) : (
         <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
           <Stat
-            label="Water volume in tunnel L1"
-            value={formatVolume(tunnelVolumeM3)}
-          />
-          <Stat
             label="Tunnel level L2 (m)"
             value={formatMeters(state.tunnel_level_l2_m)}
+          />
+          <Stat
+            label="Water volume in tunnel L1"
+            value={formatVolume(tunnelVolumeM3)}
           />
           <Stat label="Inflow F1 (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
           <Stat
