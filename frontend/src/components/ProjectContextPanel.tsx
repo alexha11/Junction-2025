@@ -52,7 +52,7 @@ function ProjectContextPanel() {
 			<div>
 				<p className="section-title mb-1">Project context</p>
 				<h3 className="text-xl font-semibold text-white">
-					HSY x Valmet Blominmäki optimization charter
+					HSY x Valmet Blominmäki flow optimization charter
 				</h3>
 				<p className="mt-2 text-sm text-slate-300">
 					Snapshot from the PRD and testing plan so every stakeholder

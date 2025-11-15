@@ -22,7 +22,7 @@ function App() {
 					<nav className="glass-card flex flex-wrap items-center justify-between gap-4">
 						<div>
 							<p className="text-xs font-semibold uppercase tracking-[0.35em] text-brand-valmet">
-								HSY x Valmet Optimizer
+								HSY x Valmet Flow Optimizer
 							</p>
 							<p className="text-lg font-semibold text-white">
 								Operations cockpit
