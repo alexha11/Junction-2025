@@ -23,6 +23,7 @@ import { useWeatherForecast } from "../hooks/useWeatherForecast";
 const fallbackState: SystemState = {
   timestamp: new Date().toISOString(),
   tunnel_level_m: 3.15,
+  tunnel_level_l2_m: 3.05,
   inflow_m3_s: 2.3,
   outflow_m3_s: 2.1,
   electricity_price_eur_mwh: 74.5,

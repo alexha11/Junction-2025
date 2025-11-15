@@ -45,6 +45,7 @@ class AgentsCoordinator:
         return SystemState(
             timestamp=now,
             tunnel_level_m=3.2,
+            tunnel_level_l2_m=3.0,
             inflow_m3_s=2.1,
             outflow_m3_s=2.0,
             electricity_price_eur_mwh=72.5,

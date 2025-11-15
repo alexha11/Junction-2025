@@ -6,6 +6,7 @@ def test_system_state_endpoint_returns_stubbed_values(api_client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["tunnel_level_m"] == stub.system_state.tunnel_level_m
+    assert payload["tunnel_level_l2_m"] == stub.system_state.tunnel_level_l2_m
     assert payload["pumps"][0]["pump_id"] == "P1"
 
 

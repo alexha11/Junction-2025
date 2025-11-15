@@ -38,6 +38,7 @@ class StubAgents:
         self.system_state = SystemState(
             timestamp=now,
             tunnel_level_m=3.5,
+            tunnel_level_l2_m=3.1,
             inflow_m3_s=2.4,
             outflow_m3_s=2.2,
             electricity_price_eur_mwh=70.0,

@@ -10,6 +10,7 @@ export interface PumpStatus {
 export interface SystemState {
   timestamp: string;
   tunnel_level_m: number;
+  tunnel_level_l2_m: number;
   inflow_m3_s: number;
   outflow_m3_s: number;
   electricity_price_eur_mwh: number;

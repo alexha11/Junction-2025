@@ -32,7 +32,7 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
     <div className="mt-6 space-y-8">
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
-          <span>Inflow ({inflow?.unit ?? "m³/s"})</span>
+          <span>Inflow F1 ({inflow?.unit ?? "m³/s"})</span>
           <span className="text-brand-accent">hydrology</span>
         </div>
         <div className="h-56">

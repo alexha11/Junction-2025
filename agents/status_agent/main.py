@@ -11,6 +11,7 @@ from agents.common import BaseMCPAgent
 class SystemStatePayload(BaseModel):
     timestamp: datetime
     tunnel_level_m: float
+    tunnel_level_l2_m: float
     inflow_m3_s: float
     outflow_m3_s: float
     pumps: List[dict]
@@ -44,6 +45,7 @@ class SystemStatusAgent(BaseMCPAgent):
         return SystemStatePayload(
             timestamp=now,
             tunnel_level_m=3.4,
+            tunnel_level_l2_m=3.1,
             inflow_m3_s=2.2,
             outflow_m3_s=2.0,
             pumps=[{"pump_id": f"P{i+1}", "frequency_hz": 48.0, "state": "on"} for i in range(8)],
