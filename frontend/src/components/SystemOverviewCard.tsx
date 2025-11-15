@@ -53,7 +53,7 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
             2
           )} / L2 ${state.tunnel_level_l2_m.toFixed(2)}`}
         />
-        <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
+        <Stat label="Inflow F1 (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow F2 (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
         <Stat
           label="Price (EUR/MWh)"

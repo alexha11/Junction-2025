@@ -22,6 +22,7 @@ from app.models import (
 )
 
 WEATHER_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "weather_fallback.json"
+PRICE_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "market_price_fallback.json"
 DEFAULT_WEATHER_SAMPLE = [
     {
         "timestamp": "2025-01-01T00:00:00+00:00",
@@ -38,6 +39,32 @@ DEFAULT_WEATHER_SAMPLE = [
         "precipitation_mm": 0.4,
         "temperature_c": 4.0,
     },
+]
+DEFAULT_PRICE_SAMPLE = [
+    {"timestamp": "2025-01-01T00:00:00+00:00", "price_eur_mwh": 64.0},
+    {"timestamp": "2025-01-01T01:00:00+00:00", "price_eur_mwh": 62.5},
+    {"timestamp": "2025-01-01T02:00:00+00:00", "price_eur_mwh": 61.0},
+    {"timestamp": "2025-01-01T03:00:00+00:00", "price_eur_mwh": 60.0},
+    {"timestamp": "2025-01-01T04:00:00+00:00", "price_eur_mwh": 59.5},
+    {"timestamp": "2025-01-01T05:00:00+00:00", "price_eur_mwh": 60.5},
+    {"timestamp": "2025-01-01T06:00:00+00:00", "price_eur_mwh": 63.0},
+    {"timestamp": "2025-01-01T07:00:00+00:00", "price_eur_mwh": 66.0},
+    {"timestamp": "2025-01-01T08:00:00+00:00", "price_eur_mwh": 70.0},
+    {"timestamp": "2025-01-01T09:00:00+00:00", "price_eur_mwh": 74.0},
+    {"timestamp": "2025-01-01T10:00:00+00:00", "price_eur_mwh": 77.5},
+    {"timestamp": "2025-01-01T11:00:00+00:00", "price_eur_mwh": 79.0},
+    {"timestamp": "2025-01-01T12:00:00+00:00", "price_eur_mwh": 78.0},
+    {"timestamp": "2025-01-01T13:00:00+00:00", "price_eur_mwh": 75.0},
+    {"timestamp": "2025-01-01T14:00:00+00:00", "price_eur_mwh": 72.0},
+    {"timestamp": "2025-01-01T15:00:00+00:00", "price_eur_mwh": 70.5},
+    {"timestamp": "2025-01-01T16:00:00+00:00", "price_eur_mwh": 69.0},
+    {"timestamp": "2025-01-01T17:00:00+00:00", "price_eur_mwh": 68.0},
+    {"timestamp": "2025-01-01T18:00:00+00:00", "price_eur_mwh": 67.5},
+    {"timestamp": "2025-01-01T19:00:00+00:00", "price_eur_mwh": 68.5},
+    {"timestamp": "2025-01-01T20:00:00+00:00", "price_eur_mwh": 70.0},
+    {"timestamp": "2025-01-01T21:00:00+00:00", "price_eur_mwh": 71.5},
+    {"timestamp": "2025-01-01T22:00:00+00:00", "price_eur_mwh": 70.0},
+    {"timestamp": "2025-01-01T23:00:00+00:00", "price_eur_mwh": 67.0},
 ]
 
 
@@ -81,10 +108,7 @@ class AgentsCoordinator:
             ForecastPoint(timestamp=now + timedelta(hours=i), value=2.0 + i * 0.1)
             for i in range(horizon)
         ]
-        price_points = [
-            ForecastPoint(timestamp=now + timedelta(hours=i), value=60 + i * 2)
-            for i in range(horizon)
-        ]
+        price_points = self._build_price_forecast_points(now, horizon)
         return [
             ForecastSeries(metric="inflow", unit="m3/s", points=points),
             ForecastSeries(metric="price", unit="EUR/MWh", points=price_points),
@@ -169,6 +193,20 @@ class AgentsCoordinator:
             for point in selected_points
         ]
 
+    def _build_price_forecast_points(self, now: datetime, hours: int) -> List[ForecastPoint]:
+        self._logger.info("Building fallback price series hours=%s", hours)
+        sample_values = self._load_sample_price_values()
+        selected_points = self._select_price_window(sample_values, now, hours)
+        if not selected_points:
+            self._logger.warning(
+                "Price sample data missing for requested horizon; using synthetic fallback",
+            )
+            return self._synthetic_price_series(now, hours)
+        return [
+            ForecastPoint(timestamp=point["timestamp"], value=point["price_eur_mwh"])
+            for point in selected_points
+        ]
+
     def _load_sample_weather_values(self) -> List[dict]:
         try:
             with WEATHER_SAMPLE_FILE.open("r", encoding="utf-8") as handle:
@@ -188,6 +226,26 @@ class AgentsCoordinator:
                 exc_info=True,
             )
         return DEFAULT_WEATHER_SAMPLE
+
+    def _load_sample_price_values(self) -> List[dict]:
+        try:
+            with PRICE_SAMPLE_FILE.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if not isinstance(data, list) or not data:
+                raise ValueError("Price sample data must be a non-empty list")
+            return data
+        except FileNotFoundError:
+            self._logger.warning(
+                "Price sample file not found path=%s; using defaults",
+                PRICE_SAMPLE_FILE,
+            )
+        except Exception:
+            self._logger.warning(
+                "Failed to read price sample file path=%s; using defaults",
+                PRICE_SAMPLE_FILE,
+                exc_info=True,
+            )
+        return DEFAULT_PRICE_SAMPLE
 
     def _select_weather_window(
         self,
@@ -245,6 +303,66 @@ class AgentsCoordinator:
                 timestamp=start + timedelta(hours=i),
                 precipitation_mm=max(0.0, 0.2 * (i % 4)),
                 temperature_c=3.0 + 0.5 * i,
+            )
+            for i in range(hours)
+        ]
+
+    def _select_price_window(
+        self,
+        sample_values: List[dict],
+        now: datetime,
+        hours: int,
+    ) -> List[dict]:
+        parsed_points = []
+        for entry in sample_values:
+            try:
+                timestamp = self._parse_iso_timestamp(entry["timestamp"])
+                parsed_points.append(
+                    {
+                        "timestamp": timestamp,
+                        "price_eur_mwh": float(entry.get("price_eur_mwh", 0.0)),
+                    }
+                )
+            except (KeyError, ValueError, TypeError):
+                self._logger.debug(
+                    "Skipping invalid price sample entry entry=%s",
+                    entry,
+                )
+                continue
+        parsed_points.sort(key=lambda item: item["timestamp"])
+        if not parsed_points:
+            return []
+        if len(parsed_points) < hours:
+            return []
+
+        rounded_now = now.replace(minute=0, second=0, microsecond=0)
+
+        start_idx = None
+        for idx, entry in enumerate(parsed_points):
+            if entry["timestamp"] >= rounded_now:
+                start_idx = idx
+                break
+
+        if start_idx is None:
+            start_idx = len(parsed_points)
+
+        end_idx = start_idx + hours
+        if end_idx > len(parsed_points):
+            start_idx = max(0, len(parsed_points) - hours)
+            end_idx = start_idx + hours
+
+        window = parsed_points[start_idx:end_idx]
+        if len(window) < hours:
+            return []
+        return window
+
+    def _synthetic_price_series(self, start: datetime, hours: int) -> List[ForecastPoint]:
+        base_price = 65.0
+        cycle = [0.0, -1.5, -2.5, -1.0, 0.5, 2.0, 4.0, 6.0]
+        return [
+            ForecastPoint(
+                timestamp=start + timedelta(hours=i),
+                value=base_price + cycle[i % len(cycle)] + 0.4 * i,
             )
             for i in range(hours)
         ]
