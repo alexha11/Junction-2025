@@ -1,0 +1,5 @@
+{
+  "python.analysis.extraPaths": [
+    "./spot-price-forecast/src"
+  ]
+}
