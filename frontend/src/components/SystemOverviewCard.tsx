@@ -49,7 +49,9 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
       <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
         <Stat
           label="Tunnel level L1/L2 (m)"
-          value={`L1 ${state.tunnel_level_m.toFixed(2)} / L2 ${state.tunnel_level_l2_m.toFixed(2)}`}
+          value={`L1 ${state.tunnel_level_m.toFixed(
+            2
+          )} / L2 ${state.tunnel_level_l2_m.toFixed(2)}`}
         />
         <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow F2 (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
