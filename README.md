@@ -33,6 +33,8 @@ cd ..  # run agents as modules so the package is discoverable
 # Real weather calls require an API key from https://home.openweathermap.org/api_keys
 export OPENWEATHER_API_KEY="<your-openweather-key>"
 python -m agents.weather_agent.main
+# Launch the HTTP shim so the FastAPI backend can call the weather agent
+python -m agents.weather_agent.server  # serves POST /weather/forecast on :8101
 python -m agents.price_agent.main
 python -m agents.status_agent.main
 python -m agents.inflow_agent.main
