@@ -37,6 +37,17 @@ class ForecastSeries(BaseModel):
     points: List[ForecastPoint]
 
 
+class WeatherPoint(BaseModel):
+    timestamp: datetime
+    precipitation_mm: float
+    temperature_c: float
+
+
+class WeatherForecastRequest(BaseModel):
+    lookahead_hours: int = Field(gt=0, le=72)
+    location: str = Field(default="Helsinki", min_length=1, max_length=128)
+
+
 class ScheduleEntry(BaseModel):
     pump_id: str
     target_frequency_hz: float

@@ -28,6 +28,8 @@ cd agents
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cd ..  # run agents as modules so the package is discoverable
+# Real weather calls require an API key from https://home.openweathermap.org/api_keys
+export OPENWEATHER_API_KEY="<your-openweather-key>"
 python -m agents.weather_agent.main
 python -m agents.price_agent.main
 python -m agents.status_agent.main
@@ -41,6 +43,8 @@ python -m agents.optimizer_agent.main
 ```bash
 cd frontend
 npm install
+# Point the UI to a running weather-agent HTTP endpoint (FastAPI proxy or direct OpenWeather URL)
+export VITE_WEATHER_AGENT_URL="http://localhost:8000/weather/forecast"
 npm run dev
 ```
 

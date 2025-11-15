@@ -30,6 +30,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     application = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=lifespan)
     application.include_router(system.router)
+    application.include_router(system.weather_router)
     application.include_router(alerts.router)
     return application
 

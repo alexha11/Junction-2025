@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import List
 
+import httpx
+
+from app.config import get_settings
+
 from app.models import (
     ForecastPoint,
     ForecastSeries,
@@ -11,6 +15,7 @@ from app.models import (
     ScheduleEntry,
     ScheduleRecommendation,
     SystemState,
+    WeatherPoint,
 )
 
 
@@ -82,3 +87,27 @@ class AgentsCoordinator:
             entries=entries,
             justification=justification,
         )
+
+    async def get_weather_forecast(self, *, lookahead_hours: int, location: str) -> List[WeatherPoint]:
+        settings = get_settings()
+        url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
+        payload = {"lookahead_hours": lookahead_hours, "location": location}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                return [WeatherPoint(**point) for point in data]
+        except Exception:  # noqa: BLE001
+            return self._fallback_weather_series(lookahead_hours)
+
+    def _fallback_weather_series(self, hours: int) -> List[WeatherPoint]:
+        now = datetime.utcnow()
+        return [
+            WeatherPoint(
+                timestamp=now + timedelta(hours=i),
+                precipitation_mm=max(0.0, 0.2 * (i % 4)),
+                temperature_c=3.0 + 0.5 * i,
+            )
+            for i in range(hours)
+        ]

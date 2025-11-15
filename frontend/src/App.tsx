@@ -1,90 +1,46 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
-import AlertsBanner from "./components/AlertsBanner";
-import DeliveryChecklist from "./components/DeliveryChecklist";
-import ForecastPanel from "./components/ForecastPanel";
-import HeroHeader from "./components/HeroHeader";
-import OverridePanel from "./components/OverridePanel";
-import ProjectContextPanel from "./components/ProjectContextPanel";
-import ProjectRoadmap from "./components/ProjectRoadmap";
-import RecommendationPanel from "./components/RecommendationPanel";
-import SystemOverviewCard from "./components/SystemOverviewCard";
-import TopBar from "./components/TopBar";
+import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import OperationsPortal from "./pages/OperationsPortal";
+import ProofDashboard from "./pages/ProofDashboard";
 
-const api = axios.create({ baseURL: "/api" });
+const navLinks = [
+  { to: "/", label: "Live operations" },
+  { to: "/proof", label: "Proof of performance" },
+];
 
-const useSystemState = () =>
-  useQuery({
-    queryKey: ["system-state"],
-    queryFn: async () => (await api.get("/system/state")).data,
-    refetchInterval: 15_000,
-  });
-
-const useForecasts = () =>
-  useQuery({
-    queryKey: ["forecasts"],
-    queryFn: async () => (await api.get("/system/forecasts")).data,
-    refetchInterval: 60_000,
-  });
-
-const useSchedule = () =>
-  useQuery({
-    queryKey: ["schedule"],
-    queryFn: async () => (await api.get("/system/schedule")).data,
-    refetchInterval: 60_000,
-  });
-
-const useAlerts = () =>
-  useQuery({
-    queryKey: ["alerts"],
-    queryFn: async () => (await api.get("/alerts")).data,
-    refetchInterval: 30_000,
-  });
+const navClassName = ({ isActive }: { isActive: boolean }) =>
+  `rounded-full px-4 py-2 text-sm font-semibold transition hover:text-white ${
+    isActive ? "bg-sky-500/20 text-sky-300 shadow-inner" : "text-slate-400"
+  }`;
 
 function App() {
-  const { data: systemState, isLoading: stateLoading } = useSystemState();
-  const { data: forecasts } = useForecasts();
-  const { data: schedule } = useSchedule();
-  const { data: alerts } = useAlerts();
-  const alertsCount = alerts?.length ?? 0;
-
-  const inflowSeries = useMemo(
-    () => forecasts?.find((series: any) => series.metric === "inflow"),
-    [forecasts]
-  );
-  const priceSeries = useMemo(
-    () => forecasts?.find((series: any) => series.metric === "price"),
-    [forecasts]
-  );
   return (
-    <div className="min-h-screen bg-slate-950/95 px-4 py-8 text-slate-100 sm:px-6 lg:px-12">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <TopBar
-          alertsCount={alertsCount}
-          scheduleGeneratedAt={schedule?.generated_at}
-        />
-        <HeroHeader
-          state={systemState}
-          schedule={schedule}
-          alertsCount={alertsCount}
-        />
-        <div className="grid gap-6 lg:grid-cols-12">
-          <div className="space-y-6 lg:col-span-8">
-            <AlertsBanner alerts={alerts ?? []} />
-            <SystemOverviewCard state={systemState} loading={stateLoading} />
-            <ForecastPanel inflow={inflowSeries} prices={priceSeries} />
-          </div>
-          <div className="space-y-6 lg:col-span-4">
-            <RecommendationPanel schedule={schedule} />
-            <OverridePanel schedule={schedule} />
-            <ProjectContextPanel />
-            <DeliveryChecklist />
-          </div>
+    <BrowserRouter>
+      <div className="min-h-screen bg-slate-950/95 px-4 py-8 text-slate-100 sm:px-6 lg:px-12">
+        <div className="mx-auto max-w-7xl space-y-6 pb-12">
+          <nav className="glass-card flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-sky-400">
+                HSY Optimizer
+              </p>
+              <p className="text-lg font-semibold text-white">
+                Operations cockpit
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {navLinks.map((link) => (
+                <NavLink key={link.to} to={link.to} className={navClassName}>
+                  {link.label}
+                </NavLink>
+              ))}
+            </div>
+          </nav>
+          <Routes>
+            <Route path="/" element={<OperationsPortal />} />
+            <Route path="/proof" element={<ProofDashboard />} />
+          </Routes>
         </div>
-        <ProjectRoadmap />
       </div>
-    </div>
+    </BrowserRouter>
   );
 }
 

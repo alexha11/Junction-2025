@@ -19,7 +19,7 @@ This document explains every file in `frontend/`, how the pieces fit together, a
 | File | Purpose |
 | --- | --- |
 | `frontend/src/main.tsx` | React bootstrap: creates a `QueryClient`, wraps `<App />` with `QueryClientProvider`, enforces `React.StrictMode`, and hydrates the `#root` element. This is where you would add global providers (theme, Zustand context, etc.). |
-| `frontend/src/App.tsx` | Top-level router. Defines navigation pills and two routes (`/` → `OperationsPortal`, `/proof` → `ProofDashboard`). **Note:** `src/pages/` is currently empty, so these components must be added before the router renders successfully. |
+| `frontend/src/App.tsx` | Top-level router with two routes (`/` → `OperationsPortal`, `/proof` → `ProofDashboard`). Navigation pills highlight the active view. |
 | `frontend/src/styles.css` | Tailwind entry file. Adds global background gradients, ensures `body/#root` span the viewport, and defines the reusable `.glass-card` container and `.section-title` helper classes. |
 
 ## Components (`src/components/`)
@@ -43,20 +43,22 @@ Each component is presentational and expects data from future hooks or props. Th
 
 | Path | Status & Intended Use |
 | --- | --- |
-| `frontend/src/pages/` | **Empty placeholder.** `App.tsx` imports `OperationsPortal` and `ProofDashboard`, so these page components need to be added here (e.g., to compose the hero, forecast, override, etc.). Failing to add them will crash the router. |
+| `frontend/src/pages/` | Houses routed layouts. `OperationsPortal` now embeds the weather agent's short (2h) and long (24h) panels alongside telemetry, and `ProofDashboard` summarizes delivery evidence. |
 | `frontend/src/data/` | **Empty placeholder.** Use for mock JSON, fixtures, or typed API response mappers when wiring data sources. |
+| `frontend/src/hooks/` | Contains API hooks. `useWeatherForecast` calls the weather agent endpoint provided via `VITE_WEATHER_AGENT_URL`, falling back to synthetic data when the agent is offline. |
+| `frontend/src/components/weather/` | Shared widgets for the weather dashboard (`WeatherMetricCard`, `WeatherForecastCard`). |
 
 ## Data Flow Expectations
 
-- **Data fetching**: React Query is configured globally but no `useQuery` hooks exist yet. Implement hooks under `src/hooks/` (new folder) and use `axios` to call `/api/*` (proxied to FastAPI).
+- **Data fetching**: React Query is configured globally. `useWeatherForecast` is the first hook (calls `/api/weather/forecast` by default); mimic this pattern for system state, schedules, etc.
 - **State management**: `zustand` is listed as a dependency but unused. Introduce a store (e.g., `src/state/systemStore.ts`) to share telemetry/pump info between components if React Query caching is insufficient.
-- **Routing gap**: Implement the missing `pages` to compose the dashboard out of the presentational components. Example: `OperationsPortal` might stitch together `TopBar`, `HeroHeader`, `SystemOverviewCard`, `ForecastPanel`, `RecommendationPanel`, `OverridePanel`, and `AlertsBanner` in a responsive grid.
+- **Weather agent exposure**: Set `VITE_WEATHER_AGENT_URL` to any reachable endpoint (e.g., FastAPI proxy to the Python agent or a direct OpenWeather URL that already embeds the API key). The React Query hook posts `{lookahead_hours, location}` to that endpoint; extend FastAPI with `/weather/forecast` to satisfy this contract.
 
 ## Extending the Frontend
 
-1. Create the missing page files under `src/pages/` and export them from `index.ts` (optional) for cleaner imports.
-2. Add API hooks (`useSystemState`, `useForecastSeries`) in a `src/hooks/` directory.
-3. Replace static arrays inside components (e.g., `DeliveryChecklist`, `ProjectRoadmap`) with props or data-driven sources once backend endpoints are live.
+1. Add additional routed views (or expand `OperationsPortal`) by composing the existing components with new data hooks.
+2. Implement more API hooks (`useSystemState`, `useForecastSeries`, etc.) under `src/hooks/` following the `useWeatherForecast` pattern.
+3. Replace static arrays inside components (e.g., `DeliveryChecklist`, `ProjectRoadmap`) with props or backend data once endpoints are live.
 4. Update `package.json` scripts/tests (`npm run test`) once Vitest is configured, aligning with `docs/testing.md` recommendations.
 
 With the above map, you can navigate every file inside `frontend/`, know what it renders, and identify the TODOs required to make the dashboard fully functional.
