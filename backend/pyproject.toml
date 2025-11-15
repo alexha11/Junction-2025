@@ -17,7 +17,9 @@ dependencies = [
   "redis>=5.0.4",
   "sqlalchemy>=2.0.32",
   "asyncpg>=0.29.0",
-  "python-dotenv>=1.0.1"
+  "python-dotenv>=1.0.1",
+  "scikit-learn>=1.5.0",
+  "requests>=2.32.0"
 ]
 
 [project.optional-dependencies]
