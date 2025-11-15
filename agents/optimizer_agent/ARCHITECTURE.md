@@ -657,9 +657,9 @@ flowchart TD
     CHECK -->|No| SKIP[Skip Divergence Check<br/>Store Current State]
     CHECK -->|Yes| COMPARE[Compare Current vs Previous]
     
-    COMPARE --> L1_CHECK{L1 Divergence?<br/>|L1_current - L1_predicted| > threshold}
-    COMPARE --> INFLOW_CHECK{Inflow Divergence?<br/>|inflow_current - inflow_forecast| > threshold}
-    COMPARE --> PRICE_CHECK{Price Divergence?<br/>|price_current - price_forecast| > threshold}
+    COMPARE --> L1_CHECK{"L1 Divergence?<br/>abs(L1_current - L1_predicted) > threshold"}
+    COMPARE --> INFLOW_CHECK{"Inflow Divergence?<br/>abs(inflow_current - inflow_forecast) > threshold"}
+    COMPARE --> PRICE_CHECK{"Price Divergence?<br/>abs(price_current - price_forecast) > threshold"}
     
     L1_CHECK -->|Yes| DIVERGENCE[Divergence Detected]
     INFLOW_CHECK -->|Yes| DIVERGENCE
