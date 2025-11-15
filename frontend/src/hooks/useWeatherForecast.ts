@@ -68,6 +68,8 @@ async function fetchFromAgent(
   return data;
 }
 
+// Mirrors the OpenWeather current-weather contract so the UI stays aligned with
+// https://openweathermap.org/guide even when bypassing our backend agent.
 async function fetchFromOpenWeather(
   url: string,
   params: Params

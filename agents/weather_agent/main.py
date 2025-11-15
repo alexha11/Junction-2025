@@ -1,3 +1,5 @@
+"""Weather MCP agent that proxies OpenWeather data per https://openweathermap.org/guide."""
+
 from __future__ import annotations
 
 import os
@@ -60,7 +62,7 @@ class WeatherAgent(BaseMCPAgent):
         ]
 
     def _fetch_openweather_current(self, *, location: str) -> WeatherPoint:
-        """Call OpenWeatherMap's current weather endpoint and normalize precipitation/temperature."""
+        """Call OpenWeatherMap's current weather endpoint per the official guide and normalize data."""
         api_key = self._require_api_key()
         url = f"{self.base_url}/weather"
         params = {
