@@ -208,7 +208,7 @@ flush_obj = ∑(t) flush_penalty[t] × flush_weight[t]
 specific_energy_obj = ∑(t,p) |energy[p][t] - target_energy[p][t]|
 ```
 - **Type:** Linear approximation (absolute deviation from target)
-- **Target:** 0.4 kWh/m³ (configurable)
+- **Target:** 0.08 kWh/m³ (configurable, better than baseline ~0.092 to encourage improvement)
 - **Weight:** 0.05 - 0.3 (adaptive)
 - **Purpose:** Minimize kWh per m³ pumped (encourage efficient operation)
 

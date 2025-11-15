@@ -28,15 +28,18 @@ class MetricsCalculator:
         self,
         simulator: RollingMPCSimulator,
         llm_explainer: Optional[LLMExplainer] = None,
+        generate_explanations: bool = False,  # Default to False - disable LLM explanations in tests
     ):
         """Initialize metrics calculator.
         
         Args:
             simulator: RollingMPCSimulator instance
             llm_explainer: Optional LLM explainer for generating explanations
+            generate_explanations: Whether to generate LLM explanations (default: False - disabled for tests)
         """
         self.simulator = simulator
         self.llm_explainer = llm_explainer
+        self.generate_explanations = generate_explanations
 
     def generate_comparison_report(
         self,
@@ -195,9 +198,9 @@ class MetricsCalculator:
                 f"✓ Specific energy: Improved by {spec_energy_improvement:.2f}%"
             )
         
-        # Try to generate LLM explanation for the overall simulation if LLM is available
+        # Try to generate LLM explanation for the overall simulation if LLM is available and enabled
         summary_explanation = None
-        if self.llm_explainer:
+        if self.llm_explainer and self.generate_explanations:
             logger.debug("LLM: Generating explanation for overall simulation results")
             try:
                 # Create metrics for overall simulation

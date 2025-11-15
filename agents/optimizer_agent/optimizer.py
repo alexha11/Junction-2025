@@ -65,21 +65,31 @@ class SystemConstraints:
 
 @dataclass
 class ForecastData:
-    """Forecasted data for optimization horizon."""
+    """Forecasted data for optimization horizon.
+
+    Note:
+        price_c_per_kwh values are in cents per kWh (c/kWh), even if the
+        original CSV column is mislabeled as EUR/MWh.
+    """
     timestamps: List[datetime]
     inflow_m3_s: List[float]
-    price_eur_mwh: List[float]
+    price_c_per_kwh: List[float]
 
 
 @dataclass
 class CurrentState:
-    """Current system state."""
+    """Current system state.
+
+    Note:
+        price_c_per_kwh is in cents per kWh (c/kWh), even if the
+        original CSV column is mislabeled as EUR/MWh.
+    """
     timestamp: datetime
     l1_m: float
     inflow_m3_s: float
     outflow_m3_s: float
     pump_states: List[Tuple[str, bool, float]]  # (pump_id, is_on, frequency_hz)
-    price_eur_mwh: float
+    price_c_per_kwh: float
 
 
 @dataclass
@@ -170,27 +180,27 @@ class MPCOptimizer:
         weights = {
             RiskLevel.LOW: {
                 "cost": 1.0,
-                "smoothness": 0.2,
+                "smoothness": 0.8,  # Increased from 0.2 - smooth outflow is desirable requirement
                 "safety_margin": 0.1,
-                "specific_energy": 0.3,
+                "specific_energy": 0.7,  # Increased from 0.6 - minimize kWh/m³ requirement
             },
             RiskLevel.NORMAL: {
                 "cost": 0.8,
-                "smoothness": 0.2,
+                "smoothness": 0.7,  # Increased from 0.2 - smooth outflow is desirable requirement
                 "safety_margin": 0.3,
-                "specific_energy": 0.2,
+                "specific_energy": 0.6,  # Increased from 0.5 - minimize kWh/m³ requirement
             },
             RiskLevel.HIGH: {
                 "cost": 0.4,
-                "smoothness": 0.1,
+                "smoothness": 0.5,  # Increased from 0.1 - still prioritize smoothness even in high risk
                 "safety_margin": 0.8,
-                "specific_energy": 0.1,
+                "specific_energy": 0.4,  # Increased from 0.3 - maintain efficiency requirement
             },
             RiskLevel.CRITICAL: {
                 "cost": 0.1,
-                "smoothness": 0.05,
+                "smoothness": 0.3,  # Increased from 0.05 - smoothness still matters even in critical
                 "safety_margin": 2.0,
-                "specific_energy": 0.05,
+                "specific_energy": 0.2,  # Increased from 0.15 - efficiency requirement
             },
         }
         return weights[risk_level]
@@ -222,8 +232,8 @@ class MPCOptimizer:
             # Emphasize cost optimization, allow more pumping (only when forecast confidence is high)
             weights["cost"] *= 1.5  # Prioritize cost
             if "specific_energy" in weights:
-                weights["specific_energy"] *= 1.2
-            weights["smoothness"] *= 0.8  # Less emphasis on smoothness
+                weights["specific_energy"] *= 1.5  # Maintain efficiency requirement
+            weights["smoothness"] *= 0.9  # Still maintain smoothness (increased from 0.8) - requirement
         elif strategy == "PUMP_MINIMAL":
             # Minimize pumping, prioritize safety
             weights["cost"] *= 0.8  # Less emphasis on cost
@@ -242,7 +252,7 @@ class MPCOptimizer:
             weights["cost"] *= 1.0  # Balanced
             if "specific_energy" in weights:
                 weights["specific_energy"] *= 1.1  # Slight emphasis on energy (pump now)
-            weights["smoothness"] *= 0.9  # Allow variation to build buffer
+            weights["smoothness"] *= 1.0  # Maintain smoothness (increased from 0.9) - requirement
         # BALANCED: use base weights unchanged
         
         return weights
@@ -297,10 +307,10 @@ class MPCOptimizer:
     ) -> List[str]:
         """Derive strategic guidance from 24h forecast (algorithmic method)."""
         guidance = []
-        avg_price = np.mean(forecast_24h.price_eur_mwh)
-        price_std = np.std(forecast_24h.price_eur_mwh)
+        avg_price = np.mean(forecast_24h.price_c_per_kwh)
+        price_std = np.std(forecast_24h.price_c_per_kwh)
         
-        for i, price in enumerate(forecast_24h.price_eur_mwh):
+        for i, price in enumerate(forecast_24h.price_c_per_kwh):
             if price < avg_price - 0.5 * price_std:
                 guidance.append("CHEAP")
             elif price > avg_price + 0.5 * price_std:
@@ -377,13 +387,13 @@ class MPCOptimizer:
         
         # Check price spike (if we have previous forecast)
         if previous_forecast_price is not None and previous_forecast_price > 1e-6:  # Use threshold to avoid division by tiny values
-            price_error_pct = abs(current_state.price_eur_mwh - previous_forecast_price) / previous_forecast_price * 100
-            if current_state.price_eur_mwh > previous_forecast_price * 1.5:  # 50% higher
+            price_error_pct = abs(current_state.price_c_per_kwh - previous_forecast_price) / previous_forecast_price * 100
+            if current_state.price_c_per_kwh > previous_forecast_price * 1.5:  # 50% higher
                 divergence = {
                     'error_type': 'price_spike',
                     'error_magnitude': price_error_pct,
                     'forecast_value': previous_forecast_price,
-                    'actual_value': current_state.price_eur_mwh,
+                    'actual_value': current_state.price_c_per_kwh,
                 }
                 return divergence
         
@@ -941,11 +951,12 @@ class MPCOptimizer:
         safety_obj = 0.0
         specific_energy_obj = 0.0
         flush_obj = 0.0  # Flush objective (encourage daily flush)
+        pump_preference_obj = 0.0  # Prefer large pumps over small pumps for efficiency
         
         # Cost: total energy cost
-        # price_eur_mwh field is now interpreted as c/kWh from inputs
+        # price_c_per_kwh is in c/kWh from inputs
         for t in range(num_steps):
-            price_eur_per_kwh = forecast.price_eur_mwh[t] / 100.0  # c/kWh -> EUR/kWh
+            price_eur_per_kwh = forecast.price_c_per_kwh[t] / 100.0  # c/kWh -> EUR/kWh
             dt_hours = self.time_step_minutes / 60.0
             for pid in pump_ids:
                 energy_kwh = pump_power[pid][t] * dt_hours
@@ -969,7 +980,7 @@ class MPCOptimizer:
         # Specific energy: minimize kWh/m³ (encourage efficient operation)
         # Linear approximation: minimize deviation from target specific energy ratio
         # Since we can't divide directly or use quadratic terms, use linear approximation
-        target_specific_energy = 0.4  # kWh/m³ target (will be tuned)
+        target_specific_energy = 0.08  # kWh/m³ target (better than baseline ~0.092 to encourage improvement)
         for t in range(num_steps):
             dt_hours = self.time_step_minutes / 60.0
             for pid in pump_ids:
@@ -981,6 +992,17 @@ class MPCOptimizer:
                 solver.Add(dev_var >= energy - target_energy)
                 solver.Add(dev_var >= target_energy - energy)
                 specific_energy_obj += dev_var
+        
+        # Pump preference: prefer large pumps over small pumps (better efficiency)
+        # Small pumps (1.1, 2.1) have higher overhead per m³
+        # Add penalty for using small pumps to encourage large pumps when possible
+        small_pump_ids = ["1.1", "2.1"]  # Small pumps
+        for t in range(num_steps):
+            for pid in pump_ids:
+                if pid in small_pump_ids:
+                    # Penalty for using small pumps (encourages large pumps when flow allows)
+                    # Weight: 0.05 per time step (increased from 0.01 for stronger preference)
+                    pump_preference_obj += pump_on[pid][t] * 0.05
         
         # Safety: penalize being close to bounds and violations
         # Use linear penalty that encourages staying away from bounds (linear programming compatible)
@@ -1018,8 +1040,8 @@ class MPCOptimizer:
         if hours_since_last_flush is not None and hours_since_last_flush >= 20:  # Near 24h mark
             # Calculate average inflow and price in forecast
             avg_inflow = np.mean(forecast.inflow_m3_s) if forecast.inflow_m3_s else 0.0
-            avg_price = np.mean(forecast.price_eur_mwh) if forecast.price_eur_mwh else 0.0
-            price_std = np.std(forecast.price_eur_mwh) if len(forecast.price_eur_mwh) > 1 else 0.0
+            avg_price = np.mean(forecast.price_c_per_kwh) if forecast.price_c_per_kwh else 0.0
+            price_std = np.std(forecast.price_c_per_kwh) if len(forecast.price_c_per_kwh) > 1 else 0.0
             
             # Flush urgency increases with hours since last flush (0-1 scale, max at 24h+)
             flush_urgency = min(1.0, (hours_since_last_flush - 20) / 4.0)  # 0 at 20h, 1.0 at 24h+
@@ -1027,7 +1049,7 @@ class MPCOptimizer:
             for t in range(num_steps):
                 # Check if this is a good time to flush (low inflow, cheap price)
                 inflow = forecast.inflow_m3_s[t] if t < len(forecast.inflow_m3_s) else avg_inflow
-                price = forecast.price_eur_mwh[t] if t < len(forecast.price_eur_mwh) else avg_price
+                price = forecast.price_c_per_kwh[t] if t < len(forecast.price_c_per_kwh) else avg_price
                 
                 # Good flush conditions: low inflow (< average) and cheap price (< average)
                 is_low_inflow = inflow < avg_inflow * 0.8 if avg_inflow > 0 else False
@@ -1052,11 +1074,15 @@ class MPCOptimizer:
         # Flush weight: moderate priority, increases with urgency
         flush_weight = 0.5 if hours_since_last_flush and hours_since_last_flush >= 20 else 0.0
         
+        # Pump preference weight: scale with specific_energy weight (efficiency-related)
+        pump_preference_weight = weights.get("specific_energy", 0.0) * 0.3  # 30% of specific_energy weight (increased from 10%)
+        
         total_obj = (
             weights["cost"] * cost_obj +
             weights["smoothness"] * smoothness_obj +
             weights["safety_margin"] * safety_obj +
             weights.get("specific_energy", 0.0) * specific_energy_obj +
+            pump_preference_weight * pump_preference_obj +
             violation_weight * violation_penalty_obj +
             flush_weight * flush_obj
         )
@@ -1126,8 +1152,8 @@ class MPCOptimizer:
                         dt_hours = self.time_step_minutes / 60.0
                         energy = power * dt_hours
                         total_energy += energy
-                        # price_eur_mwh is in c/kWh → convert to EUR/kWh
-                        total_cost += energy * (forecast.price_eur_mwh[t] / 100.0)
+                        # price_c_per_kwh is in c/kWh → convert to EUR/kWh
+                        total_cost += energy * (forecast.price_c_per_kwh[t] / 100.0)
             
             solve_time = time.time() - start_time
             
@@ -1245,8 +1271,8 @@ class MPCOptimizer:
                 dt_hours = self.time_step_minutes / 60.0
                 energy = power * dt_hours
                 total_energy += energy
-                # price_eur_mwh is in c/kWh → convert to EUR/kWh
-                total_cost += energy * (forecast.price_eur_mwh[t] / 100.0)
+                # price_c_per_kwh is in c/kWh → convert to EUR/kWh
+                total_cost += energy * (forecast.price_c_per_kwh[t] / 100.0)
             
             # Add off pumps
             for pid in pump_ids:

@@ -242,13 +242,13 @@ classDiagram
         +float l1_m
         +float inflow_m3_s
         +float outflow_m3_s
-        +float price_eur_mwh
+        +float price_c_per_kwh
     }
     
     class ForecastData {
         +List[datetime] timestamps
         +List[float] inflow_m3_s
-        +List[float] price_eur_mwh
+        +List[float] price_c_per_kwh
         +int horizon_steps
     }
     

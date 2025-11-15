@@ -42,7 +42,7 @@ class OptimalWindow:
     window_type: str  # CHEAP, RAINY, AVOID_SURGE, etc.
     reason: str  # Why this window is optimal
     priority: int  # 1 (highest) to 5 (lowest)
-    avg_price_eur_mwh: float
+    avg_price_c_per_kwh: float
     avg_inflow_m3_s: float
     confidence: float  # 0.0-1.0
 

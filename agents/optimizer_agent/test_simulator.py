@@ -443,8 +443,8 @@ class RollingMPCSimulator:
                         # Compare forecast vs actual
                         forecast_inflow = prev_forecast.inflow_m3_s[0]
                         actual_inflow = current_state.inflow_m3_s
-                        forecast_price = prev_forecast.price_eur_mwh[0]
-                        actual_price = current_state.price_eur_mwh
+                        forecast_price = prev_forecast.price_c_per_kwh[0]
+                        actual_price = current_state.price_c_per_kwh
                         
                         # Calculate errors
                         inflow_error_pct = abs(actual_inflow - forecast_inflow) / max(forecast_inflow, 0.1) * 100 if forecast_inflow > 0 else 0
@@ -490,6 +490,69 @@ class RollingMPCSimulator:
                 current_time += timedelta(minutes=self.reoptimize_interval_minutes)
                 continue
             
+            # Detect divergence and generate emergency response if needed
+            divergence = None
+            emergency_response = None
+            if len(simulation.results) > 0:
+                prev_result = simulation.results[-1]
+                if prev_result.optimization_result.success and prev_result.optimization_result.l1_trajectory:
+                    # Get previous forecast values for divergence detection
+                    prev_time = prev_result.timestamp
+                    prev_forecast = self.data_loader.get_forecast_from_time(
+                        prev_time, 1, method=self.forecast_method
+                    )
+                    
+                    predicted_l1 = prev_result.optimization_result.l1_trajectory[0]
+                    prev_forecast_inflow = prev_forecast.inflow_m3_s[0] if prev_forecast and len(prev_forecast.inflow_m3_s) > 0 else None
+                    prev_forecast_price = prev_forecast.price_c_per_kwh[0] if prev_forecast and len(prev_forecast.price_c_per_kwh) > 0 else None
+                    
+                    # Detect divergence
+                    divergence = self.optimizer.detect_divergence(
+                        current_state=current_state,
+                        forecast=forecast,  # Use current forecast for structure
+                        previous_prediction=predicted_l1,
+                        previous_forecast_inflow=prev_forecast_inflow,
+                        previous_forecast_price=prev_forecast_price,
+                    )
+                    
+                    # Generate emergency response if divergence detected and LLM available
+                    if divergence and self.llm_explainer:
+                        try:
+                            try:
+                                loop = asyncio.get_event_loop()
+                            except RuntimeError:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                            
+                            emergency_response = loop.run_until_complete(
+                                self.llm_explainer.generate_emergency_response(
+                                    error_type=divergence['error_type'],
+                                    error_magnitude=divergence['error_magnitude'],
+                                    forecast_value=divergence['forecast_value'],
+                                    actual_value=divergence['actual_value'],
+                                    current_l1_m=current_state.l1_m,
+                                    l1_min_m=self.optimizer.constraints.l1_min_m,
+                                    l1_max_m=self.optimizer.constraints.l1_max_m,
+                                    predicted_l1_m=predicted_l1,
+                                )
+                            )
+                            if emergency_response:
+                                logger.warning("")
+                                emergency_lines = [
+                                    f"🚨 EMERGENCY RESPONSE TRIGGERED",
+                                    f"Error Type: {divergence['error_type'].upper()}",
+                                    f"Severity: {emergency_response.severity.upper()}",
+                                    f"Magnitude: {divergence['error_magnitude']:.2f}",
+                                    "",
+                                    f"Forecast: {divergence['forecast_value']:.2f}",
+                                    f"Actual: {divergence['actual_value']:.2f}",
+                                    "",
+                                    f"Reasoning: {emergency_response.reasoning[:200]}...",
+                                ]
+                                log_boxed(logger, "EMERGENCY RESPONSE", emergency_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+                        except Exception as e:
+                            logger.warning(f"Failed to generate emergency response: {e}")
+            
             # Get 24h forecast for strategic planning (if LLM available and enabled)
             strategic_plan = None
             if self.generate_strategic_plan and self.llm_explainer:
@@ -510,7 +573,7 @@ class RollingMPCSimulator:
                             self.llm_explainer.generate_strategic_plan(
                                 forecast_24h_timestamps=forecast_24h.timestamps,
                                 forecast_24h_inflow=forecast_24h.inflow_m3_s,
-                                forecast_24h_price=forecast_24h.price_eur_mwh,
+                                forecast_24h_price=forecast_24h.price_c_per_kwh,
                                 current_l1_m=current_state.l1_m,
                                 l1_min_m=self.optimizer.constraints.l1_min_m,
                                 l1_max_m=self.optimizer.constraints.l1_max_m,
@@ -629,7 +692,7 @@ class RollingMPCSimulator:
                 ["Tunnel Level (L1)", f"{current_state.l1_m:.2f} m", f"[{self.optimizer.constraints.l1_min_m:.1f} - {self.optimizer.constraints.l1_max_m:.1f} m]"],
                 ["Inflow (F1)", f"{current_state.inflow_m3_s:.2f} m³/s", ""],
                 ["Outflow (F2)", f"{current_state.outflow_m3_s:.2f} m³/s", ""],
-                ["Electricity Price", f"{current_state.price_eur_mwh:.1f} c/kWh", ""],
+                ["Electricity Price", f"{current_state.price_c_per_kwh:.1f} c/kWh", ""],
             ]
             log_table(logger, ["Parameter", "Value", "Range/Status"], system_state_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             
@@ -738,6 +801,7 @@ class RollingMPCSimulator:
                     timeout_seconds=30,
                     strategic_plan=strategic_plan,  # Pass strategic plan to influence optimization
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
+                    emergency_response=emergency_response,  # Pass emergency response if divergence detected
                     hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
                     )
                 result_rows = [
@@ -774,6 +838,7 @@ class RollingMPCSimulator:
                     timeout_seconds=10,
                     strategic_plan=strategic_plan,  # Pass strategic plan to fallback too
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
+                    emergency_response=emergency_response,  # Pass emergency response if divergence detected
                     hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
                 )
                 fallback_rows = [
@@ -865,7 +930,7 @@ class RollingMPCSimulator:
                         f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
                         f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
                         f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
-                        f"Electricity price={current_state.price_eur_mwh:.1f} c/kWh. "
+                        f"Electricity price={current_state.price_c_per_kwh:.1f} c/kWh. "
                         f"Pump states: {pump_state_desc}"
                     )
                     
@@ -977,7 +1042,7 @@ class RollingMPCSimulator:
                 for schedule in opt_result.schedules:
                     if schedule.time_step == 0 and schedule.is_on:
                         step_energy += schedule.power_kw * dt_hours
-                        step_cost += schedule.power_kw * dt_hours * (current_state.price_eur_mwh / 1000.0)
+                        step_cost += schedule.power_kw * dt_hours * (current_state.price_c_per_kwh / 100.0)
                 
                 simulation.optimized_energy.append(step_energy)
                 simulation.optimized_cost.append(step_cost)
@@ -991,7 +1056,7 @@ class RollingMPCSimulator:
             for pump_id, pump_data in baseline_schedule.items():
                 if pump_data['is_on']:
                     baseline_energy += pump_data['power_kw'] * dt_hours
-                    baseline_cost += pump_data['power_kw'] * dt_hours * (current_state.price_eur_mwh / 1000.0)
+                    baseline_cost += pump_data['power_kw'] * dt_hours * (current_state.price_c_per_kwh / 100.0)
             
             simulation.baseline_energy.append(baseline_energy)
             simulation.baseline_cost.append(baseline_cost)
@@ -1110,8 +1175,8 @@ class RollingMPCSimulator:
         """Compute metrics for a single optimization step."""
         if not result.l1_trajectory:
             # Forecast prices are already in c/kWh in ForecastData
-            min_price = min(forecast.price_eur_mwh)
-            max_price = max(forecast.price_eur_mwh)
+            min_price = min(forecast.price_c_per_kwh)
+            max_price = max(forecast.price_c_per_kwh)
             return ScheduleMetrics(
                 total_energy_kwh=result.total_energy_kwh,
                 total_cost_eur=result.total_cost_eur,
@@ -1120,13 +1185,13 @@ class RollingMPCSimulator:
                 max_l1_m=current_state.l1_m,
                 num_pumps_used=len([s for s in result.schedules if s.time_step == 0 and s.is_on]),
                 avg_outflow_m3_s=sum(s.flow_m3_s for s in result.schedules if s.time_step == 0 and s.is_on),
-                price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
+                price_range_c_per_kwh=(min_price, max_price),
                 risk_level="normal",
                 optimization_mode=result.mode.value,
             )
         
-        min_price = min(forecast.price_eur_mwh)
-        max_price = max(forecast.price_eur_mwh)
+        min_price = min(forecast.price_c_per_kwh)
+        max_price = max(forecast.price_c_per_kwh)
         return ScheduleMetrics(
             total_energy_kwh=result.total_energy_kwh,
             total_cost_eur=result.total_cost_eur,
@@ -1135,7 +1200,7 @@ class RollingMPCSimulator:
             max_l1_m=max(result.l1_trajectory),
             num_pumps_used=len(set(s.pump_id for s in result.schedules if s.is_on)),
             avg_outflow_m3_s=sum(s.flow_m3_s for s in result.schedules if s.time_step == 0 and s.is_on),
-            price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
+            price_range_c_per_kwh=(min_price, max_price),
             risk_level="normal",
             optimization_mode=result.mode.value,
         )

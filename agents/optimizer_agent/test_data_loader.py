@@ -159,8 +159,8 @@ class HSYDataLoader:
             inflow_m3_s=float(row.get('F1_m3_s', row.get('Inflow to tunnel F1', 0.0) / 900.0)),
             outflow_m3_s=float(row.get('F2_m3_s', row.get('Sum of pumped flow to WWTP F2', 0.0) / 900.0)),
             pump_states=pump_states,  # Empty/default by default - represents old strategy violations
-            # Store price in c/kWh (for optimizer we still use the same field name)
-            price_eur_mwh=float(row.get('Price_c_per_kWh', row.get('Electricity price 2: normal', 0.0))),
+            # Store price in c/kWh
+            price_c_per_kwh=float(row.get('Price_c_per_kWh', row.get('Electricity price 2: normal', 0.0))),
         )
 
     def get_forecast_from_time(
@@ -224,7 +224,7 @@ class HSYDataLoader:
         return ForecastData(
             timestamps=[ts.to_pydatetime() if isinstance(ts, pd.Timestamp) else ts for ts in timestamps[:horizon_steps]],
             inflow_m3_s=inflows[:horizon_steps],
-            price_eur_mwh=prices[:horizon_steps],
+            price_c_per_kwh=prices[:horizon_steps],
         )
 
     def get_baseline_schedule_at_time(self, timestamp: datetime) -> dict:

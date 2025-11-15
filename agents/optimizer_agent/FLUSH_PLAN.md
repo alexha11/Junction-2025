@@ -42,7 +42,7 @@ flush_target_level_m: float = 0.5  # Flush to near minimum (0.5m)
 class ForecastData:
     timestamps: List[datetime]
     inflow_m3_s: List[float]
-    price_eur_mwh: List[float]
+    price_c_per_kwh: List[float]
     is_flush_day: bool = False  # NEW: Flag for flush planning
 ```
 
@@ -108,10 +108,10 @@ def find_optimal_flush_window(
         window_start = hour * 4
         window_end = window_start + 8
         
-        if window_end > len(forecast_24h.price_eur_mwh):
+        if window_end > len(forecast_24h.price_c_per_kwh):
             continue
         
-        window_prices = forecast_24h.price_eur_mwh[window_start:window_end]
+        window_prices = forecast_24h.price_c_per_kwh[window_start:window_end]
         window_avg_price = np.mean(window_prices)
         
         # Check inflow during window (must remain low)

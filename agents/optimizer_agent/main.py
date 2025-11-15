@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import httpx
 from pydantic import BaseModel
@@ -75,6 +76,12 @@ class OptimizationAgent(BaseMCPAgent):
         )
         # Initialize forecast quality tracker for recalibration loop
         self.forecast_quality_tracker = ForecastQualityTracker()
+        
+        # Cache for strategic plan to avoid unnecessary LLM calls
+        self._cached_strategic_plan: Optional[Any] = None
+        self._cached_strategic_plan_timestamp: Optional[datetime] = None
+        self._cached_forecast_hash: Optional[str] = None
+        self._strategic_plan_cache_ttl_minutes: int = 60  # Cache for 1 hour by default
 
     def _init_optimizer(self):
         """Initialize the MPC optimizer with pump specifications.
@@ -136,7 +143,7 @@ class OptimizationAgent(BaseMCPAgent):
             pumps=pumps,
             constraints=constraints,
             time_step_minutes=15,
-            tactical_horizon_minutes=120,  # 2-hour tactical horizon
+            tactical_horizon_minutes=360,  # 6-hour tactical horizon (changed from 2h to allow pump transitions)
             strategic_horizon_minutes=1440,
         )
 
@@ -151,35 +158,15 @@ class OptimizationAgent(BaseMCPAgent):
             forecast = self._get_forecasts(request.horizon_minutes)
             
             # Generate strategic plan (24h) BEFORE optimization (so it can influence optimization)
-            strategic_plan = None
-            try:
-                import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                # Get 24h forecast for strategic planning
-                forecast_24h = self._get_forecasts(1440)  # 24 hours
-                if forecast_24h:
-                    strategic_plan = loop.run_until_complete(
-                        self.explainer.generate_strategic_plan(
-                            forecast_24h_timestamps=forecast_24h.timestamps,
-                            forecast_24h_inflow=forecast_24h.inflow_m3_s,
-                            forecast_24h_price=forecast_24h.price_eur_mwh,
-                            current_l1_m=current_state.l1_m,
-                            l1_min_m=self.optimizer.constraints.l1_min_m,
-                            l1_max_m=self.optimizer.constraints.l1_max_m,
-                            forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
-                        )
-                    )
-                    if strategic_plan:
-                        logger.info(f"LLM Strategic Plan: {strategic_plan.plan_type}")
-                        logger.info(f"  Description: {strategic_plan.description}")
-                        logger.info(f"  Reasoning: {strategic_plan.reasoning[:200]}...")
-            except Exception as e:
-                logger.warning(f"Failed to generate LLM strategic plan: {e}")
+            # Use cached plan if forecasts haven't changed significantly and everything is working as predicted
+            strategic_plan = self._get_strategic_plan(current_state)
+            
+            # Detect divergence and generate emergency response if needed
+            # Note: In production, we'd need to track previous predictions/forecasts
+            # For now, this is a placeholder - full implementation would require state tracking
+            divergence = None
+            emergency_response = None
+            # TODO: Track previous predictions and forecasts to enable divergence detection in production
             
             # Solve optimization (strategic plan can influence weights)
             result = self.optimizer.solve_optimization(
@@ -188,6 +175,7 @@ class OptimizationAgent(BaseMCPAgent):
                 mode=OptimizationMode.FULL,
                 timeout_seconds=30,
                 strategic_plan=strategic_plan,  # Pass strategic plan to optimizer
+                emergency_response=emergency_response,  # Pass emergency response if divergence detected
             )
             
             if not result.success:
@@ -198,6 +186,7 @@ class OptimizationAgent(BaseMCPAgent):
                     mode=OptimizationMode.RULE_BASED,
                     timeout_seconds=10,
                     strategic_plan=strategic_plan,
+                    emergency_response=emergency_response,  # Pass emergency response to fallback too
                 )
             
             # Convert to response format
@@ -243,7 +232,7 @@ class OptimizationAgent(BaseMCPAgent):
                     inflow_m3_s=data.get("inflow_m3_s", 2.1),
                     outflow_m3_s=data.get("outflow_m3_s", 2.0),
                     pump_states=pumps,
-                    price_eur_mwh=data.get("price_eur_mwh", 72.5),
+                    price_c_per_kwh=data.get("price_c_per_kwh", data.get("price_c_per_kwh", 72.5)),
                 )
         except Exception:
             pass
@@ -259,7 +248,7 @@ class OptimizationAgent(BaseMCPAgent):
                 (pid, idx % 2 == 0, 48.0 if idx % 2 == 0 else 0.0)
                 for idx, pid in enumerate(default_pump_ids)
             ],
-            price_eur_mwh=72.5,
+            price_c_per_kwh=72.5,
         )
 
     def _get_forecasts(self, horizon_minutes: int) -> ForecastData:
@@ -313,7 +302,7 @@ class OptimizationAgent(BaseMCPAgent):
         return ForecastData(
             timestamps=timestamps[:num_steps],
             inflow_m3_s=inflow_forecast[:num_steps],
-            price_eur_mwh=price_forecast[:num_steps],
+            price_c_per_kwh=price_forecast[:num_steps],
         )
 
     def _convert_to_entries(
@@ -406,8 +395,8 @@ class OptimizationAgent(BaseMCPAgent):
         avg_outflow = total_outflow / max(1, num_on_steps) if num_on_steps > 0 else 0.0
         
         # Forecast prices are already in c/kWh in ForecastData
-        min_price = min(forecast.price_eur_mwh)
-        max_price = max(forecast.price_eur_mwh)
+        min_price = min(forecast.price_c_per_kwh)
+        max_price = max(forecast.price_c_per_kwh)
         return ScheduleMetrics(
             total_energy_kwh=result.total_energy_kwh,
             total_cost_eur=result.total_cost_eur,
@@ -416,7 +405,7 @@ class OptimizationAgent(BaseMCPAgent):
             max_l1_m=max(result.l1_trajectory),
             num_pumps_used=pumps_used,
             avg_outflow_m3_s=avg_outflow,
-            price_range_c_per_kwh=(min_price / 10.0, max_price / 10.0),
+            price_range_c_per_kwh=(min_price, max_price),
             risk_level="normal",  # Could be computed from optimizer
             optimization_mode=result.mode.value,
         )
@@ -430,7 +419,7 @@ class OptimizationAgent(BaseMCPAgent):
     ) -> str:
         """Generate explanation using LLM if available, otherwise fallback."""
         # Build current state description (price already in c/kWh)
-        price_c_per_kwh = current_state.price_eur_mwh
+        price_c_per_kwh = current_state.price_c_per_kwh
         current_state_desc = (
             f"Tunnel level: {current_state.l1_m:.2f}m, "
             f"Inflow: {current_state.inflow_m3_s:.2f} m³/s, "
@@ -486,6 +475,126 @@ class OptimizationAgent(BaseMCPAgent):
             )
             logger.info(f"Fallback Explanation: {fallback_explanation}")
             return fallback_explanation
+
+    def _get_forecast_hash(self, forecast: ForecastData) -> str:
+        """Generate a hash of the forecast to detect changes."""
+        # Create a hash from key forecast characteristics
+        # Use first 24 hours of data (sampled every hour to reduce sensitivity to minor variations)
+        sample_indices = list(range(0, min(len(forecast.inflow_m3_s), 96), 4))  # Every hour (4 * 15min)
+        inflow_samples = [forecast.inflow_m3_s[i] for i in sample_indices]
+        price_samples = [forecast.price_c_per_kwh[i] for i in sample_indices]
+        
+        # Round to reduce sensitivity to tiny variations
+        inflow_rounded = [round(x, 2) for x in inflow_samples]
+        price_rounded = [round(x, 1) for x in price_samples]
+        
+        hash_input = f"{inflow_rounded}{price_rounded}"
+        return hashlib.md5(hash_input.encode()).hexdigest()
+    
+    def _should_refetch_strategic_plan(
+        self,
+        forecast_24h: ForecastData,
+        current_state: CurrentState,
+        previous_prediction: Optional[float] = None,
+    ) -> bool:
+        """Determine if we should refetch the strategic plan.
+        
+        Returns True if we should fetch a new plan, False if we can reuse cached one.
+        """
+        # Always fetch if no cache exists
+        if self._cached_strategic_plan is None:
+            return True
+        
+        # Check if cache has expired (time-based)
+        if self._cached_strategic_plan_timestamp:
+            age_minutes = (datetime.utcnow() - self._cached_strategic_plan_timestamp).total_seconds() / 60
+            if age_minutes > self._strategic_plan_cache_ttl_minutes:
+                logger.debug(f"Strategic plan cache expired (age: {age_minutes:.1f} min > {self._strategic_plan_cache_ttl_minutes} min)")
+                return True
+        
+        # Check if forecasts have changed significantly
+        current_hash = self._get_forecast_hash(forecast_24h)
+        if current_hash != self._cached_forecast_hash:
+            logger.debug("Strategic plan cache invalidated: forecasts changed significantly")
+            return True
+        
+        # Check for divergence from predictions (if we have previous prediction)
+        if previous_prediction is not None:
+            divergence = self.optimizer.detect_divergence(
+                current_state=current_state,
+                forecast=forecast_24h,
+                previous_prediction=previous_prediction,
+            )
+            if divergence:
+                logger.info(f"Strategic plan cache invalidated: divergence detected ({divergence['error_type']})")
+                return True
+        
+        # Check forecast quality - if quality is poor, we should refetch more frequently
+        quality_patterns = self.forecast_quality_tracker.get_error_patterns()
+        if quality_patterns.get('quality_level') == 'poor':
+            # If quality is poor, reduce cache TTL to 15 minutes
+            if self._cached_strategic_plan_timestamp:
+                age_minutes = (datetime.utcnow() - self._cached_strategic_plan_timestamp).total_seconds() / 60
+                if age_minutes > 15:  # Shorter TTL for poor quality forecasts
+                    logger.debug("Strategic plan cache invalidated: poor forecast quality requires fresh strategy")
+                    return True
+        
+        # Everything is working as predicted - reuse cached plan
+        logger.debug("Reusing cached strategic plan (forecasts unchanged, no divergence detected)")
+        return False
+    
+    def _get_strategic_plan(self, current_state: CurrentState, previous_prediction: Optional[float] = None) -> Optional[Any]:
+        """Get strategic plan, using cache if appropriate."""
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Get 24h forecast for strategic planning
+            forecast_24h = self._get_forecasts(1440)  # 24 hours
+            if not forecast_24h:
+                return None
+            
+            # Check if we should reuse cached plan
+            if not self._should_refetch_strategic_plan(forecast_24h, current_state, previous_prediction):
+                logger.info("Reusing cached strategic plan (everything working as predicted)")
+                return self._cached_strategic_plan
+            
+            # Fetch new strategic plan
+            logger.info("Fetching new strategic plan (forecasts changed or cache expired)")
+            strategic_plan = loop.run_until_complete(
+                    self.explainer.generate_strategic_plan(
+                        forecast_24h_timestamps=forecast_24h.timestamps,
+                        forecast_24h_inflow=forecast_24h.inflow_m3_s,
+                        forecast_24h_price=forecast_24h.price_c_per_kwh,
+                    current_l1_m=current_state.l1_m,
+                    l1_min_m=self.optimizer.constraints.l1_min_m,
+                    l1_max_m=self.optimizer.constraints.l1_max_m,
+                    forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
+                )
+            )
+            
+            if strategic_plan:
+                # Update cache
+                self._cached_strategic_plan = strategic_plan
+                self._cached_strategic_plan_timestamp = datetime.utcnow()
+                self._cached_forecast_hash = self._get_forecast_hash(forecast_24h)
+                
+                logger.info(f"LLM Strategic Plan: {strategic_plan.plan_type}")
+                logger.info(f"  Description: {strategic_plan.description}")
+                logger.info(f"  Reasoning: {strategic_plan.reasoning[:200]}...")
+            
+            return strategic_plan
+        except Exception as e:
+            logger.warning(f"Failed to generate LLM strategic plan: {e}")
+            # Return cached plan as fallback if available
+            if self._cached_strategic_plan:
+                logger.info("Using cached strategic plan as fallback after error")
+                return self._cached_strategic_plan
+            return None
 
     def _generate_fallback_schedule(self, request: OptimizationRequest) -> OptimizationResponse:
         """Generate a simple fallback schedule if optimization fails."""

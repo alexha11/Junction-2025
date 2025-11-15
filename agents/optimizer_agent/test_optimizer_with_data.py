@@ -232,14 +232,14 @@ def main():
     print(f"  Configured {len(optimizer.pumps)} pumps (2 small ~0.5 m³/s, 5 big ~1.0 m³/s, 1 offline)")
     print()
     
-    # Initialize LLM explainer if API keys are available (for strategic planning by default)
-    # Or if explicitly requested via --use-llm flag
+    # Initialize LLM explainer only if explicitly requested via --use-llm flag
+    # Disabled by default for faster tests
     llm_explainer = None
     api_base = os.getenv("FEATHERLESS_API_BASE")
     api_key = os.getenv("FEATHERLESS_API_KEY")
     
-    # Enable LLM if explicitly requested OR if API keys are available (for strategic planning)
-    should_use_llm = args.use_llm or (api_base and api_key)
+    # Enable LLM only if explicitly requested (disabled by default for tests)
+    should_use_llm = args.use_llm
     
     if should_use_llm:
         # Log what we found (without exposing the key)
@@ -309,9 +309,14 @@ def main():
         comparison_metrics = simulator.compare_with_baseline(simulation)
         
         # Generate report (LLM explainer is already initialized above)
-        metrics_calculator = MetricsCalculator(simulator, llm_explainer=llm_explainer)
+        # Disable LLM explanations in tests by default (only enable if explicitly requested)
+        metrics_calculator = MetricsCalculator(
+            simulator, 
+            llm_explainer=llm_explainer,
+            generate_explanations=args.explanations and (llm_explainer is not None),  # Only if explicitly requested
+        )
         
-        if args.use_llm and llm_explainer:
+        if args.use_llm and llm_explainer and args.explanations:
             logger.info("Generating additional LLM explanation for overall simulation summary...")
             print("Generating overall simulation summary explanation (this may take a moment)...")
         
