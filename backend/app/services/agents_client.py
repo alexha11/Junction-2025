@@ -5,10 +5,14 @@ import sys
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import os
+import pickle
+import sys
 from pathlib import Path
 from typing import List
 
 import httpx
+import pandas as pd
 
 from app.config import get_settings
 
@@ -25,14 +29,11 @@ from app.models import (
 
 from app.services.digital_twin import get_digital_twin_current_state
 
-import pickle
-import pandas as pd
-from datetime import datetime, timedelta
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FORECASTER_PATH = os.path.join(BASE_DIR, "../../../spot-price-forecast/src")
-sys.path.insert(0, FORECASTER_PATH)
-
+# Make the local spot-price-forecast sources importable without packaging them.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+FORECASTER_SRC = REPO_ROOT / "spot-price-forecast" / "src"
+if str(FORECASTER_SRC) not in sys.path:
+    sys.path.append(str(FORECASTER_SRC))
 
 from forecaster.models import models
 
