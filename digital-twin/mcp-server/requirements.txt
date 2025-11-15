@@ -1,0 +1,4 @@
+opcua
+pandas
+cryptography
+fastmcp
