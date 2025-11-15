@@ -128,11 +128,11 @@ const OperationsPortal = () => {
           scheduleData?.generated_at ?? schedule.generated_at
         }
       />
-      <HeroHeader
+      {/* <HeroHeader
         state={state}
         schedule={scheduleData ?? schedule}
         alertsCount={alerts.length}
-      />
+      /> */}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">
