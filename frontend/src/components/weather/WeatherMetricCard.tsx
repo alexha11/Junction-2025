@@ -33,9 +33,7 @@ const WeatherMetricCard = ({
         {trendLabels[trend]}
       </span>
     </div>
-    {description && (
-      <p className="text-sm text-slate-400">{description}</p>
-    )}
+    {description && <p className="text-sm text-slate-400">{description}</p>}
   </div>
 );
 
