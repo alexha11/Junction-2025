@@ -1,0 +1,15 @@
+{
+  "daily_price_lags": [
+    1,
+    2,
+    3,
+    7
+  ],
+  "time_features": true,
+  "external_features": {},
+  "daily_external_lags": [],
+  "nFeatures": 52,
+  "fit_coeffs": true,
+  "saved_at": "2025-11-15T19:19:56.002388",
+  "num_coefficients": 52
+}

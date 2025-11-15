@@ -33,14 +33,14 @@ const OverridePanel = ({ schedule }: { schedule?: any }) => {
         />
         <button
           type="submit"
-          className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 px-4 py-3 text-sm font-semibold uppercase tracking-wide text-white hover:from-sky-400 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-brand-hsy to-brand-valmet px-4 py-3 text-sm font-semibold uppercase tracking-wide text-white hover:from-brand-hsy/80 hover:to-brand-valmet/80 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={!reason}
         >
           Log override
         </button>
       </form>
       {submitted && (
-        <div className="mt-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm text-emerald-100">
+        <div className="mt-4 rounded-2xl border border-brand-valmet/40 bg-brand-valmet/10 px-4 py-2 text-sm text-brand-valmet">
           Override logged. Thank you for keeping the loop human-aware.
         </div>
       )}

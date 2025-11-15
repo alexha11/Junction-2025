@@ -9,9 +9,9 @@ interface Props {
 }
 
 const badgeStyles: Record<Alert["level"], string> = {
-  info: "border-sky-400/30 bg-sky-400/5 text-sky-200",
-  warning: "border-amber-400/30 bg-amber-400/5 text-amber-100",
-  critical: "border-red-500/30 bg-red-500/5 text-red-100",
+  info: "border-brand-accent/40 bg-brand-accent/10 text-brand-accent",
+  warning: "border-brand-warn/40 bg-brand-warn/10 text-brand-warn",
+  critical: "border-brand-critical/40 bg-brand-critical/10 text-brand-critical",
 };
 
 function AlertsBanner({ alerts }: Props) {

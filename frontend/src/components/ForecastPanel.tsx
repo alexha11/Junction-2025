@@ -6,6 +6,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { BRAND_COLORS, brandColorWithOpacity } from "../theme/colors";
 
 type Series = {
   metric: string;
@@ -32,7 +33,7 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
     <div className="mt-6 space-y-8">
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
-          <span>Inflow ({inflow?.unit ?? "m³/s"})</span>
+          <span>Inflow F1 ({inflow?.unit ?? "m³/s"})</span>
           <span className="text-brand-accent">hydrology</span>
         </div>
         <div className="h-56">
@@ -43,22 +44,25 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
                 <YAxis
                   domain={[0, "dataMax + 1"]}
                   width={32}
-                  stroke="#475569"
+                  stroke={BRAND_COLORS.gridStrong}
                 />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#0f172a",
+                    background: BRAND_COLORS.surfaceAlt,
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: `1px solid ${brandColorWithOpacity(
+                      "accent",
+                      0.25
+                    )}`,
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#38bdf8"
+                  stroke={BRAND_COLORS.accent}
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"
@@ -75,28 +79,31 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
           <span>Electricity price ({prices?.unit ?? "EUR"})</span>
-          <span className="text-brand-warn">market</span>
+          <span className="text-brand-valmet">market</span>
         </div>
         <div className="h-52">
           {prices ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={prices.points}>
                 <XAxis dataKey="timestamp" hide />
-                <YAxis width={32} stroke="#475569" />
+                <YAxis width={32} stroke={BRAND_COLORS.gridStrong} />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#0f172a",
+                    background: BRAND_COLORS.surfaceAlt,
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: `1px solid ${brandColorWithOpacity(
+                      "valmet",
+                      0.25
+                    )}`,
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#f97316"
+                  stroke={BRAND_COLORS.valmet}
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"

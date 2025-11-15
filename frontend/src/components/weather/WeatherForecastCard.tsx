@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import type { WeatherPoint } from "../../hooks/useWeatherForecast";
+import { BRAND_COLORS, brandColorWithOpacity } from "../../theme/colors";
 
 interface Props {
   title: string;
@@ -104,36 +105,50 @@ const WeatherForecastCard = ({
                     x2="0"
                     y2="1"
                   >
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#0f172a" stopOpacity={0} />
+                    <stop
+                      offset="0%"
+                      stopColor={BRAND_COLORS.accent}
+                      stopOpacity={0.45}
+                    />
+                    <stop
+                      offset="100%"
+                      stopColor={BRAND_COLORS.base}
+                      stopOpacity={0}
+                    />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
+                <CartesianGrid
+                  stroke={BRAND_COLORS.gridMuted}
+                  strokeDasharray="3 3"
+                />
                 <XAxis
                   dataKey="label"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   yAxisId="temperature"
                   orientation="left"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   yAxisId="precipitation"
                   orientation="right"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "#0f172a",
+                    background: BRAND_COLORS.surfaceAlt,
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: `1px solid ${brandColorWithOpacity(
+                      "accent",
+                      0.25
+                    )}`,
                     color: "white",
                   }}
                 />
@@ -148,14 +163,14 @@ const WeatherForecastCard = ({
                   type="monotone"
                   dataKey="precipitation"
                   fill="url(#precipGradient)"
-                  stroke="#38bdf8"
+                  stroke={BRAND_COLORS.accent}
                   strokeWidth={2}
                 />
                 <Line
                   yAxisId="temperature"
                   type="monotone"
                   dataKey="temperature"
-                  stroke="#f97316"
+                  stroke={BRAND_COLORS.valmet}
                   strokeWidth={3}
                   dot={false}
                 />

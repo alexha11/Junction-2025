@@ -42,6 +42,20 @@ cd backend
 pytest -q
 ```
 
+**Current coverage snapshot (Nov 2025)**
+
+- `tests/conftest.py` now exposes a `StubAgents` fixture that overrides the FastAPI dependency wiring so API routes can be exercised without live MCP agents.
+- `tests/test_api_routes.py` hits `/system/state`, `/system/forecasts`, `/system/schedule`, `/weather/forecast`, and `/alerts/`, asserting the JSON payloads match the deterministic stubbed values and that request bodies are forwarded to the weather agent call.
+
+Run just the API suite while iterating:
+
+```bash
+cd backend
+pytest tests/test_api_routes.py -q
+```
+
+> Tip: these tests currently emit `datetime.utcnow()` deprecation warnings from both the stub and production code. They are harmless, but switch to `datetime.now(datetime.UTC)` once UTC-aware timestamps roll out to silence the noise.
+
 **Recommended additions**
 
 - **Model validation**: ensure `SystemState`, `ForecastSeries`, `ScheduleRecommendation`, and `Alert` schemas reject invalid payloads.

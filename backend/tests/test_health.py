@@ -9,3 +9,4 @@ def test_read_state():
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["tunnel_level_m"] > 0
+    assert payload["tunnel_level_l2_m"] > 0

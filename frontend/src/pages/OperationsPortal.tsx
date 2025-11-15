@@ -23,6 +23,7 @@ import { useWeatherForecast } from "../hooks/useWeatherForecast";
 const fallbackState: SystemState = {
   timestamp: new Date().toISOString(),
   tunnel_level_m: 3.15,
+  tunnel_level_l2_m: 3.05,
   inflow_m3_s: 2.3,
   outflow_m3_s: 2.1,
   electricity_price_eur_mwh: 74.5,
@@ -132,6 +133,23 @@ const OperationsPortal = () => {
         schedule={scheduleData ?? schedule}
         alertsCount={alerts.length}
       />
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
+          <SystemOverviewCard state={state} loading={systemLoading} />
+          <ForecastPanel inflow={inflow} prices={price} />
+          <RecommendationPanel
+            schedule={scheduleData ?? schedule}
+            loading={scheduleLoading}
+          />
+        </div>
+        <div className="space-y-6">
+          <AlertsBanner alerts={alerts} />
+          <OverridePanel />
+          <DeliveryChecklist />
+        </div>
+      </div>
+
       <section className="space-y-4">
         <div className="glass-card flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -195,7 +213,7 @@ const OperationsPortal = () => {
                 : "Waiting for feed"}
             </p>
           </div>
-          <div className="mt-4 max-h-[320px] overflow-auto rounded-3xl border border-white/5">
+          <div className="mt-4 max-h-[320px] overflow-auto rounded-3xl border border-white/5 scroll-glow">
             <table className="w-full text-sm text-slate-300">
               <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
                 <tr>
@@ -241,21 +259,6 @@ const OperationsPortal = () => {
           </div>
         </div>
       </section>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
-          <SystemOverviewCard state={state} loading={systemLoading} />
-          <ForecastPanel inflow={inflow} prices={price} />
-          <RecommendationPanel
-            schedule={scheduleData ?? schedule}
-            loading={scheduleLoading}
-          />
-        </div>
-        <div className="space-y-6">
-          <AlertsBanner alerts={alerts} />
-          <OverridePanel />
-          <DeliveryChecklist />
-        </div>
-      </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <ProjectContextPanel />
         <ProjectRoadmap />
