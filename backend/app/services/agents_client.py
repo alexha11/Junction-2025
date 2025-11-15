@@ -156,20 +156,14 @@ class AgentsCoordinator:
 
             y_hat = abs(model.predict(X).values[0]) if feature_cols else 1.0
             print(f"Predicted price for {ts.isoformat()}: {y_hat}")
-            price_predictions.append(ForecastPoint(timestamp=ts, value=round(y_hat + 3, 2))) 
+            price_predictions.append(ForecastPoint(timestamp=ts, value=round(y_hat, 2))) 
 
             recent_values.append(y_hat)
             recent_values = recent_values[-max_lag:]
 
-        points = [
-            ForecastPoint(timestamp=now + timedelta(hours=i), value=2.0 + i * 0.1)
-            for i in range(horizon)
-        ]
-        price_points = self._build_price_forecast_points(now, horizon)
-
         return [
             ForecastSeries(metric="inflow", unit="m3/s", points=[]),
-            ForecastSeries(metric="price", unit="EUR/MWh", points=price_predictions),
+            ForecastSeries(metric="price", unit="C/kWh", points=price_predictions),
         ]
 
     async def get_schedule_recommendation(self) -> ScheduleRecommendation:
