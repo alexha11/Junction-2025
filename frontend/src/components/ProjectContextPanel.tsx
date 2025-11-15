@@ -1,21 +1,34 @@
 const missionPoints = [
-  "Lower pumping energy spend while respecting tunnel safety bounds",
-  "Blend weather, inflow, and price signals into a trusted AI copilot",
-  "Keep operators in charge with transparent recommendations and overrides",
+  {
+    title: "Energy impact",
+    detail:
+      "Reduce pumping spend without pushing tunnel level outside 0.5–8.0 m safety band.",
+  },
+  {
+    title: "Evidence-first decisions",
+    detail:
+      "Blend weather, inflow, price, and physics agents so each recommendation ships with traceable context.",
+  },
+  {
+    title: "Human control",
+    detail:
+      "Manual overrides, justifications, and audit trails remain first-class to maintain operator trust.",
+  },
 ];
 
 const stack = [
   {
     label: "Frontend",
-    detail: "React + Vite + Tailwind powering the operator cockpit",
+    detail: "React · Vite · Tailwind UI with React Query for live data",
   },
   {
     label: "Backend",
-    detail: "FastAPI orchestrates agents, scheduler, and telemetry APIs",
+    detail: "FastAPI + APScheduler exposing /system and /alerts surfaces",
   },
   {
     label: "Agents",
-    detail: "Weather, price, inflow, status, and optimization agents via MCP",
+    detail:
+      "Weather, price, inflow, status, and optimizer services exposed over MCP",
   },
 ];
 
@@ -23,14 +36,17 @@ const metrics = [
   {
     label: "Cost reduction target",
     value: ">15% vs baseline",
+    caption: "Validated over 14-day simulator window",
   },
   {
     label: "Constraint breaches",
     value: "0 tolerated",
+    caption: "Tunnel level + pump cooldown limits",
   },
   {
     label: "Operator trust",
     value: "Explainable plans",
+    caption: "Override log + justification",
   },
 ];
 
@@ -43,21 +59,24 @@ function ProjectContextPanel() {
           HSY Blominmäki optimization charter
         </h3>
         <p className="mt-2 text-sm text-slate-300">
-          Direct pull from the PRD so every stakeholder sees why the dashboard
-          exists and what success looks like.
+          Snapshot from the PRD and testing plan so every stakeholder
+          understands scope, architecture, and KPIs.
         </p>
       </div>
       <div>
         <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
           Mission priorities
         </p>
-        <ul className="mt-2 space-y-2 text-sm text-slate-200">
+        <ul className="mt-2 space-y-3 text-sm text-slate-200">
           {missionPoints.map((point) => (
             <li
-              key={point}
+              key={point.title}
               className="rounded-2xl border border-white/5 bg-white/5 px-3 py-2"
             >
-              {point}
+              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">
+                {point.title}
+              </p>
+              <p className="mt-1 text-sm text-slate-100">{point.detail}</p>
             </li>
           ))}
         </ul>
@@ -90,8 +109,29 @@ function ProjectContextPanel() {
               {metric.label}
             </p>
             <p className="text-lg font-semibold text-white">{metric.value}</p>
+            <p className="text-xs text-slate-200/80">{metric.caption}</p>
           </div>
         ))}
+      </div>
+      <div className="rounded-2xl border border-white/5 bg-slate-900/70 px-4 py-3 text-xs text-slate-300">
+        Reference:{" "}
+        <a
+          className="text-brand-accent hover:underline"
+          href="https://github.com/alexha11/Junction-2025/blob/main/docs/PRD.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          PRD
+        </a>
+        &nbsp;·&nbsp;
+        <a
+          className="text-brand-accent hover:underline"
+          href="https://github.com/alexha11/Junction-2025/blob/main/docs/testing.md"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Testing guide
+        </a>
       </div>
     </div>
   );

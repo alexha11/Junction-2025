@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import AlertsBanner from "./components/AlertsBanner";
+import DeliveryChecklist from "./components/DeliveryChecklist";
 import ForecastPanel from "./components/ForecastPanel";
 import HeroHeader from "./components/HeroHeader";
 import OverridePanel from "./components/OverridePanel";
@@ -9,6 +10,7 @@ import ProjectContextPanel from "./components/ProjectContextPanel";
 import ProjectRoadmap from "./components/ProjectRoadmap";
 import RecommendationPanel from "./components/RecommendationPanel";
 import SystemOverviewCard from "./components/SystemOverviewCard";
+import TopBar from "./components/TopBar";
 
 const api = axios.create({ baseURL: "/api" });
 
@@ -56,8 +58,12 @@ function App() {
     [forecasts]
   );
   return (
-    <div className="min-h-screen bg-slate-950/95 px-4 py-10 text-slate-100 sm:px-6 lg:px-12">
+    <div className="min-h-screen bg-slate-950/95 px-4 py-8 text-slate-100 sm:px-6 lg:px-12">
       <div className="mx-auto max-w-7xl space-y-8">
+        <TopBar
+          alertsCount={alertsCount}
+          scheduleGeneratedAt={schedule?.generated_at}
+        />
         <HeroHeader
           state={systemState}
           schedule={schedule}
@@ -73,6 +79,7 @@ function App() {
             <RecommendationPanel schedule={schedule} />
             <OverridePanel schedule={schedule} />
             <ProjectContextPanel />
+            <DeliveryChecklist />
           </div>
         </div>
         <ProjectRoadmap />

@@ -2,6 +2,8 @@ const phases = [
   {
     label: "Now",
     focus: "Stabilise telemetry & AI recommendations",
+    owner: "Ops + Backend",
+    status: "In progress",
     checklist: [
       "Verify FastAPI health + /system endpoints",
       "Close the loop with simulator adapter",
@@ -11,6 +13,8 @@ const phases = [
   {
     label: "Next",
     focus: "Automate quality gates",
+    owner: "QA + Frontend",
+    status: "Planned",
     checklist: [
       "Add Vitest + Playwright runs to CI",
       "Property-test optimization constraints",
@@ -20,6 +24,8 @@ const phases = [
   {
     label: "Later",
     focus: "Production hardening",
+    owner: "Platform",
+    status: "Backlog",
     checklist: [
       "Redis-backed caching & audit trails",
       "Role-based access and notifications",
@@ -47,12 +53,16 @@ function ProjectRoadmap() {
             key={phase.label}
             className="rounded-3xl border border-white/10 bg-slate-900/60 px-4 py-4"
           >
-            <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-              {phase.label}
-            </p>
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-widest text-slate-400">
+              <span>{phase.label}</span>
+              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-slate-200">
+                {phase.status}
+              </span>
+            </div>
             <h4 className="mt-1 text-lg font-semibold text-white">
               {phase.focus}
             </h4>
+            <p className="text-xs text-slate-400">Owner: {phase.owner}</p>
             <ul className="mt-3 space-y-2 text-sm text-slate-200">
               {phase.checklist.map((item) => (
                 <li key={item} className="flex items-start gap-2">

@@ -33,9 +33,9 @@ interface Props {
 }
 
 const insightPills = [
-  "Goal: cut pumping energy cost",
-  "Safety band: 0.5m – 8.0m",
-  "Agents orchestrated via MCP",
+  "Realtime risk posture",
+  "Optimization cadence: 15 min",
+  "Operator in-the-loop guarantees",
 ];
 
 const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
@@ -64,15 +64,16 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
     },
     {
       label: "Inflow vs outflow",
-      value: state
-        ? `${state.inflow_m3_s.toFixed(1)} / ${state.outflow_m3_s.toFixed(
-            1
-          )} m³/s`
-        : "--",
+      value:
+        state && typeof state.inflow_m3_s === "number"
+          ? `${state.inflow_m3_s.toFixed(1)} / ${state.outflow_m3_s.toFixed(
+              1
+            )} m³/s`
+          : "--",
       sub: "Hydro balance",
     },
     {
-      label: "Electricity",
+      label: "Power price",
       value: state
         ? `${state.electricity_price_eur_mwh.toFixed(1)} €/MWh`
         : "--",
@@ -89,45 +90,45 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
   ];
 
   return (
-    <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-slate-900/20 p-8 shadow-card">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.4),transparent_55%),radial-gradient(circle_at_right,rgba(249,115,22,0.3),transparent_60%)]" />
-      <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-wider text-slate-300">
-        <span className="rounded-full border border-white/10 px-3 py-1 text-white/90">
+    <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-slate-950/95 via-slate-950/70 to-slate-900/30 p-8 shadow-card">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(56,189,248,0.35),transparent_60%),radial-gradient(circle_at_90%_20%,rgba(249,115,22,0.2),transparent_65%)]" />
+      <div className="flex flex-wrap items-center gap-3 text-xs font-medium uppercase tracking-wider text-slate-200">
+        <span className="rounded-full border border-white/15 px-3 py-1 text-white/90">
           HSY · Blominmäki
         </span>
         <span className="rounded-full border border-brand-accent/40 bg-brand-accent/10 px-3 py-1 text-brand-accent">
-          AI Copilot
+          AI Copilot Stack
         </span>
         <span className="rounded-full border border-white/10 px-3 py-1 text-slate-200">
-          Alerts · {alertsCount}
+          Active alerts · {alertsCount}
         </span>
       </div>
       <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-4">
           <div>
-            <p className="section-title mb-2">Realtime optimization cockpit</p>
+            <p className="section-title mb-2">Executive mission brief</p>
             <h1 className="text-3xl font-semibold text-white sm:text-4xl">
-              Keep tunnels safe, power bills low, and operators in control.
+              Operational resilience through transparent, multi-agent decisions.
             </h1>
           </div>
           <p className="max-w-3xl text-base text-slate-300">
-            Multi-agent reasoning ingests weather, inflow, and Nord Pool feeds
-            to propose pump schedules every 15 minutes. Operators stay in the
-            loop with transparent telemetry, justifications, and manual
-            guardrails for HSY’s Blominmäki wastewater plant.
+            Weather, inflow, market, and physics agents collaborate via MCP
+            tooling, feeding FastAPI services that publish actionable
+            recommendations every 15 minutes. Operators always see the evidence,
+            can audit justifications, and override safely.
           </p>
           <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-widest">
             {insightPills.map((pill) => (
               <span
                 key={pill}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-slate-200"
+                className="rounded-full border border-white/15 bg-white/5 px-4 py-1 text-slate-100"
               >
                 {pill}
               </span>
             ))}
           </div>
         </div>
-        <div className="rounded-3xl border border-white/10 bg-black/30 px-6 py-4 text-sm text-slate-200">
+        <div className="rounded-3xl border border-white/10 bg-black/40 px-6 py-4 text-sm text-slate-200">
           <div className="flex items-center justify-between gap-6">
             <div>
               <p className="text-xs uppercase tracking-widest text-slate-400">
@@ -147,8 +148,8 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-400">
-            Justification & manual override preserved to keep the AI
-            accountable.
+            Recommendation payloads, justification text, and manual overrides
+            are retained for audit readiness.
           </p>
         </div>
       </div>
