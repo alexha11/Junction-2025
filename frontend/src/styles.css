@@ -4,23 +4,24 @@
 
 @layer base {
   body {
-    @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
+    @apply min-h-screen text-slate-100 antialiased;
+    background-color: #041914;
     background-image: radial-gradient(
         circle at 10% 20%,
-        rgba(56, 189, 248, 0.15),
+        rgba(0, 180, 157, 0.2),
         transparent 45%
       ),
       radial-gradient(
         circle at 90% 10%,
-        rgba(249, 115, 22, 0.08),
+        rgba(90, 185, 70, 0.12),
         transparent 55%
       ),
       radial-gradient(
         circle at 50% 80%,
-        rgba(14, 165, 233, 0.08),
+        rgba(167, 233, 105, 0.08),
         transparent 50%
       ),
-      linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(2, 6, 23, 0.98));
+      linear-gradient(180deg, rgba(4, 25, 20, 0.95), rgba(2, 10, 8, 0.98));
   }
 
   #root {
@@ -30,7 +31,7 @@
 
 @layer components {
   .glass-card {
-    @apply rounded-3xl border border-white/5 bg-slate-900/70 p-6 shadow-card backdrop-blur-xl;
+    @apply rounded-3xl border border-white/5 bg-brand-surface/80 p-6 shadow-card backdrop-blur-xl;
   }
 
   .section-title {
@@ -40,7 +41,7 @@
 
 .scroll-glow {
   scrollbar-width: thin;
-  scrollbar-color: rgba(56, 189, 248, 0.5) rgba(15, 23, 42, 0.8);
+  scrollbar-color: rgba(0, 180, 157, 0.6) rgba(4, 25, 20, 0.85);
 }
 
 .scroll-glow::-webkit-scrollbar {
@@ -49,19 +50,19 @@
 }
 
 .scroll-glow::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.7);
+  background: rgba(4, 25, 20, 0.82);
   border-radius: 9999px;
 }
 
 .scroll-glow::-webkit-scrollbar-thumb {
   background: linear-gradient(
     180deg,
-    rgba(56, 189, 248, 0.85),
-    rgba(59, 130, 246, 0.65)
+    rgba(0, 180, 157, 0.9),
+    rgba(90, 185, 70, 0.65)
   );
   border-radius: 9999px;
 }
 
 .scroll-glow::-webkit-scrollbar-thumb:hover {
-  background: rgba(56, 189, 248, 0.95);
+  background: rgba(0, 180, 157, 0.95);
 }

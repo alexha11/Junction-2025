@@ -104,36 +104,36 @@ const WeatherForecastCard = ({
                     x2="0"
                     y2="1"
                   >
-                    <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#0f172a" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#00b49d" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#041914" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
+                <CartesianGrid stroke="#1a342c" strokeDasharray="3 3" />
                 <XAxis
                   dataKey="label"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: "#6b8a7f", fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   yAxisId="temperature"
                   orientation="left"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: "#6b8a7f", fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
                   yAxisId="precipitation"
                   orientation="right"
-                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  tick={{ fill: "#6b8a7f", fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "#0f172a",
+                    background: "#031511",
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: "1px solid rgba(0,180,157,0.25)",
                     color: "white",
                   }}
                 />
@@ -148,14 +148,14 @@ const WeatherForecastCard = ({
                   type="monotone"
                   dataKey="precipitation"
                   fill="url(#precipGradient)"
-                  stroke="#38bdf8"
+                  stroke="#00b49d"
                   strokeWidth={2}
                 />
                 <Line
                   yAxisId="temperature"
                   type="monotone"
                   dataKey="temperature"
-                  stroke="#f97316"
+                  stroke="#5ab946"
                   strokeWidth={3}
                   dot={false}
                 />

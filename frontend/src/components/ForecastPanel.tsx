@@ -43,22 +43,22 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
                 <YAxis
                   domain={[0, "dataMax + 1"]}
                   width={32}
-                  stroke="#475569"
+                  stroke="#1f3d35"
                 />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#0f172a",
+                    background: "#031511",
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: "1px solid rgba(0,180,157,0.25)",
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#38bdf8"
+                  stroke="#00b49d"
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"
@@ -75,28 +75,28 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
           <span>Electricity price ({prices?.unit ?? "EUR"})</span>
-          <span className="text-brand-warn">market</span>
+          <span className="text-brand-valmet">market</span>
         </div>
         <div className="h-52">
           {prices ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={prices.points}>
                 <XAxis dataKey="timestamp" hide />
-                <YAxis width={32} stroke="#475569" />
+                <YAxis width={32} stroke="#1f3d35" />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#0f172a",
+                    background: "#031511",
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: "1px solid rgba(90,185,70,0.25)",
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#f97316"
+                  stroke="#5ab946"
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"

@@ -6,8 +6,8 @@ interface Props {
 }
 
 const trendColors: Record<NonNullable<Props["trend"]>, string> = {
-  up: "text-emerald-300",
-  down: "text-rose-300",
+  up: "text-brand-valmet",
+  down: "text-brand-critical",
   flat: "text-slate-300",
 };
 
