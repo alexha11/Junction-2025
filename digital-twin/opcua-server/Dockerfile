@@ -26,6 +26,7 @@ COPY --from=prep-data /app/data /app/data
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV SPEEDUP=1
 
 # Ignored in docker-compose.yml
 CMD ["python", "opcua_server.py"]

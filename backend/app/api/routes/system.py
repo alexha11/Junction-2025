@@ -26,14 +26,26 @@ async def read_state(agents: AgentsCoordinator = Depends(get_agents)) -> SystemS
     return await agents.get_system_state()
 
 
+@router.get("/digital-twin/state", response_model=dict)
+async def read_digital_twin_state(
+    agents: AgentsCoordinator = Depends(get_agents),
+) -> dict:
+    logger.info("Received request for digital twin current state")
+    return await agents.get_digital_twin_current_state()
+
+
 @router.get("/forecasts", response_model=list[ForecastSeries])
-async def read_forecasts(agents: AgentsCoordinator = Depends(get_agents)) -> list[ForecastSeries]:
+async def read_forecasts(
+    agents: AgentsCoordinator = Depends(get_agents),
+) -> list[ForecastSeries]:
     logger.info("Received request for forecast bundle")
     return await agents.get_forecasts()
 
 
 @router.get("/schedule", response_model=ScheduleRecommendation)
-async def read_schedule(agents: AgentsCoordinator = Depends(get_agents)) -> ScheduleRecommendation:
+async def read_schedule(
+    agents: AgentsCoordinator = Depends(get_agents),
+) -> ScheduleRecommendation:
     logger.info("Received request for schedule recommendation")
     return await agents.get_schedule_recommendation()
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from datetime import datetime, timedelta, timezone
 import json
 import logging
@@ -25,6 +27,8 @@ from app.models import (
     WeatherPoint,
 )
 
+from app.services.digital_twin import get_digital_twin_current_state
+
 # Make the local spot-price-forecast sources importable without packaging them.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FORECASTER_SRC = REPO_ROOT / "spot-price-forecast" / "src"
@@ -33,8 +37,12 @@ if str(FORECASTER_SRC) not in sys.path:
 
 from forecaster.models import models
 
-WEATHER_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "weather_fallback.json"
-PRICE_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "market_price_fallback.json"
+WEATHER_SAMPLE_FILE = (
+    Path(__file__).resolve().parents[3] / "sample" / "weather_fallback.json"
+)
+PRICE_SAMPLE_FILE = (
+    Path(__file__).resolve().parents[3] / "sample" / "market_price_fallback.json"
+)
 DEFAULT_WEATHER_SAMPLE = [
     {
         "timestamp": "2025-01-01T00:00:00+00:00",
@@ -92,7 +100,9 @@ class AgentsCoordinator:
 
     async def get_system_state(self) -> SystemState:
         now = datetime.utcnow()
-        self._logger.debug("Generating synthetic system state timestamp=%s", now.isoformat())
+        self._logger.debug(
+            "Generating synthetic system state timestamp=%s", now.isoformat()
+        )
         pumps = [
             PumpStatus(
                 pump_id=f"P{i+1}",
@@ -106,11 +116,18 @@ class AgentsCoordinator:
             timestamp=now,
             tunnel_level_m=3.2,
             tunnel_level_l2_m=3.0,
+            tunnel_water_volume_l1_m3=1250.0,
             inflow_m3_s=2.1,
             outflow_m3_s=2.0,
             electricity_price_eur_mwh=72.5,
             pumps=pumps,
         )
+
+    async def get_digital_twin_current_state(self) -> dict:
+        self._logger.debug("Fetching current digital twin synthetic system state")
+
+        state = await get_digital_twin_current_state(self)
+        return state
 
     async def get_forecasts(self) -> List[ForecastSeries]:
         """Generate a 24-hour forecast from now using LinearModel."""
@@ -119,7 +136,10 @@ class AgentsCoordinator:
         self._logger.info("Building forecast bundle horizon_hours=%s", horizon)
 
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        MODEL_PATH = os.path.join(BASE_DIR, "../../../spot-price-forecast/models/consumption_forecast_model.pkl")
+        MODEL_PATH = os.path.join(
+            BASE_DIR,
+            "../../../spot-price-forecast/models/consumption_forecast_model.pkl",
+        )
         DATA_PATH = os.path.join(BASE_DIR, "../../../spot-price-forecast/data/165.csv")
 
         with open(MODEL_PATH, "rb") as f:
@@ -129,7 +149,6 @@ class AgentsCoordinator:
                 time_features=md["time_features"],
             )
             model.coeffs = md["coeffs"]
-      
 
         df = pd.read_csv(DATA_PATH)
         df["startTime"] = pd.to_datetime(df["startTime"], utc=True).dt.tz_localize(None)
@@ -138,15 +157,20 @@ class AgentsCoordinator:
         feature_cols = hist.drop(columns="y").columns.tolist()
         last_row = hist.iloc[-1]
         max_lag = max(model.daily_price_lags)
-        recent_values = hist['y'].iloc[-max_lag:].tolist()
-       
+        recent_values = hist["y"].iloc[-max_lag:].tolist()
 
         forecast_hours = pd.date_range(start=now, periods=horizon, freq="h")
         price_predictions = []
 
         for ts in forecast_hours:
-            features = {f'y_lag_avg_{lag}': recent_values[-lag] if len(recent_values) >= lag else recent_values[-1]
-                        for lag in model.daily_price_lags}
+            features = {
+                f"y_lag_avg_{lag}": (
+                    recent_values[-lag]
+                    if len(recent_values) >= lag
+                    else recent_values[-1]
+                )
+                for lag in model.daily_price_lags
+            }
 
             hour = ts.hour
             is_weekend = ts.weekday() >= 5
@@ -157,12 +181,30 @@ class AgentsCoordinator:
             if current in feature_cols:
                 features[current] = 1.0
 
-            X = pd.DataFrame([[features.get(col, last_row[col] if col in last_row.index and col != 'y' else 0.0)
-                               for col in feature_cols]], columns=feature_cols) if feature_cols else pd.DataFrame([[0]])
+            X = (
+                pd.DataFrame(
+                    [
+                        [
+                            features.get(
+                                col,
+                                (
+                                    last_row[col]
+                                    if col in last_row.index and col != "y"
+                                    else 0.0
+                                ),
+                            )
+                            for col in feature_cols
+                        ]
+                    ],
+                    columns=feature_cols,
+                )
+                if feature_cols
+                else pd.DataFrame([[0]])
+            )
 
             y_hat = abs(model.predict(X).values[0]) if feature_cols else 1.0
             print(f"Predicted price for {ts.isoformat()}: {y_hat}")
-            price_predictions.append(ForecastPoint(timestamp=ts, value=round(y_hat, 2))) 
+            price_predictions.append(ForecastPoint(timestamp=ts, value=round(y_hat, 2)))
 
             recent_values.append(y_hat)
             recent_values = recent_values[-max_lag:]
@@ -174,7 +216,9 @@ class AgentsCoordinator:
 
     async def get_schedule_recommendation(self) -> ScheduleRecommendation:
         now = datetime.utcnow()
-        self._logger.info("Producing schedule recommendation generated_at=%s", now.isoformat())
+        self._logger.info(
+            "Producing schedule recommendation generated_at=%s", now.isoformat()
+        )
         entries = [
             ScheduleEntry(
                 pump_id="P1",
@@ -189,9 +233,7 @@ class AgentsCoordinator:
                 end_time=now + timedelta(hours=2, minutes=30),
             ),
         ]
-        justification = (
-            "Maintain tunnel level near 3.0 m while anticipating higher inflow in 2 hours."
-        )
+        justification = "Maintain tunnel level near 3.0 m while anticipating higher inflow in 2 hours."
         return ScheduleRecommendation(
             generated_at=now,
             horizon_minutes=120,
@@ -199,7 +241,9 @@ class AgentsCoordinator:
             justification=justification,
         )
 
-    async def get_weather_forecast(self, *, lookahead_hours: int, location: str) -> List[WeatherPoint]:
+    async def get_weather_forecast(
+        self, *, lookahead_hours: int, location: str
+    ) -> List[WeatherPoint]:
         settings = get_settings()
         url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
         payload = {"lookahead_hours": lookahead_hours, "location": location}
@@ -226,7 +270,9 @@ class AgentsCoordinator:
                 url,
             )
         except httpx.RequestError as exc:
-            self._logger.warning("Weather agent request failed url=%s error=%s", url, exc)
+            self._logger.warning(
+                "Weather agent request failed url=%s error=%s", url, exc
+            )
         except Exception:
             self._logger.exception("Unexpected error while requesting weather forecast")
 
@@ -251,7 +297,9 @@ class AgentsCoordinator:
             for point in selected_points
         ]
 
-    def _build_price_forecast_points(self, now: datetime, hours: int) -> List[ForecastPoint]:
+    def _build_price_forecast_points(
+        self, now: datetime, hours: int
+    ) -> List[ForecastPoint]:
         self._logger.info("Building fallback price series hours=%s", hours)
         sample_values = self._load_sample_price_values()
         selected_points = self._select_price_window(sample_values, now, hours)
@@ -355,7 +403,9 @@ class AgentsCoordinator:
             return []
         return window
 
-    def _synthetic_weather_series(self, start: datetime, hours: int) -> List[WeatherPoint]:
+    def _synthetic_weather_series(
+        self, start: datetime, hours: int
+    ) -> List[WeatherPoint]:
         return [
             WeatherPoint(
                 timestamp=start + timedelta(hours=i),
@@ -414,7 +464,9 @@ class AgentsCoordinator:
             return []
         return window
 
-    def _synthetic_price_series(self, start: datetime, hours: int) -> List[ForecastPoint]:
+    def _synthetic_price_series(
+        self, start: datetime, hours: int
+    ) -> List[ForecastPoint]:
         base_price = 65.0
         cycle = [0.0, -1.5, -2.5, -1.0, 0.5, 2.0, 4.0, 6.0]
         return [
