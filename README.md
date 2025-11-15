@@ -27,7 +27,7 @@ Each agent currently ships with deterministic stub logic so the rest of the stac
 
 ```bash
 cd agents
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && 1
 pip install -r requirements.txt
 cd ..  # run agents as modules so the package is discoverable
 # Real weather calls require an API key from https://home.openweathermap.org/api_keys
