@@ -12,7 +12,8 @@ interface Params {
 }
 
 const FALLBACK_LOCATION = "Helsinki";
-const WEATHER_AGENT_URL = import.meta.env.VITE_WEATHER_AGENT_URL ?? "/api/weather/forecast";
+const WEATHER_AGENT_URL =
+  import.meta.env.VITE_WEATHER_AGENT_URL ?? "/api/weather/forecast";
 
 const resolveUrl = (target: string) => {
   if (target.startsWith("http")) {
@@ -24,7 +25,8 @@ const resolveUrl = (target: string) => {
   return `${window.location.origin}${target}`;
 };
 
-const isOpenWeatherEndpoint = (url: string) => url.includes("api.openweathermap.org");
+const isOpenWeatherEndpoint = (url: string) =>
+  url.includes("api.openweathermap.org");
 
 async function requestWeatherForecast(params: Params): Promise<WeatherPoint[]> {
   const resolvedUrl = resolveUrl(WEATHER_AGENT_URL);
@@ -43,7 +45,10 @@ async function requestWeatherForecast(params: Params): Promise<WeatherPoint[]> {
   }
 }
 
-async function fetchFromAgent(url: string, params: Params): Promise<WeatherPoint[]> {
+async function fetchFromAgent(
+  url: string,
+  params: Params
+): Promise<WeatherPoint[]> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -63,7 +68,10 @@ async function fetchFromAgent(url: string, params: Params): Promise<WeatherPoint
   return data;
 }
 
-async function fetchFromOpenWeather(url: string, params: Params): Promise<WeatherPoint[]> {
+async function fetchFromOpenWeather(
+  url: string,
+  params: Params
+): Promise<WeatherPoint[]> {
   const urlObject = new URL(url);
   const location = params.location || FALLBACK_LOCATION;
   urlObject.searchParams.set("q", location);
@@ -74,9 +82,11 @@ async function fetchFromOpenWeather(url: string, params: Params): Promise<Weathe
   }
 
   const payload = await response.json();
-  const timestampMs = (payload.dt ? payload.dt * 1000 : Date.now());
-  const temperature = typeof payload.main?.temp === "number" ? payload.main.temp : 0;
-  const precipitation = Number(payload.rain?.["1h"] ?? 0) + Number(payload.snow?.["1h"] ?? 0);
+  const timestampMs = payload.dt ? payload.dt * 1000 : Date.now();
+  const temperature =
+    typeof payload.main?.temp === "number" ? payload.main.temp : 0;
+  const precipitation =
+    Number(payload.rain?.["1h"] ?? 0) + Number(payload.snow?.["1h"] ?? 0);
 
   return Array.from({ length: params.hours }).map((_, index) => ({
     timestamp: new Date(timestampMs + index * 60 * 60 * 1000).toISOString(),

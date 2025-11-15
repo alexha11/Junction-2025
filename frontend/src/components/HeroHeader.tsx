@@ -41,7 +41,8 @@ const insightPills = [
 const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
   const pumpCount = state?.pumps?.length ?? 0;
   const pumpsActive = state?.pumps
-    ? state.pumps.filter((pump) => ["running", "on"].includes(pump.state)).length
+    ? state.pumps.filter((pump) => ["running", "on"].includes(pump.state))
+        .length
     : undefined;
 
   const lastPlanWindow = schedule?.entries?.[0]

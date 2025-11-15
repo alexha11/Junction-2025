@@ -19,7 +19,13 @@ interface Props {
   horizonLabel: string;
 }
 
-const WeatherForecastCard = ({ title, subtitle, data, loading, horizonLabel }: Props) => {
+const WeatherForecastCard = ({
+  title,
+  subtitle,
+  data,
+  loading,
+  horizonLabel,
+}: Props) => {
   if (loading && !data) {
     return (
       <div className="glass-card h-full animate-pulse text-sm text-slate-400">
@@ -37,9 +43,16 @@ const WeatherForecastCard = ({ title, subtitle, data, loading, horizonLabel }: P
     precipitation: Number(point.precipitation_mm.toFixed(2)),
   }));
 
-  const temperatureHigh = formatted?.reduce((max, point) => Math.max(max, point.temperature), -Infinity);
-  const temperatureLow = formatted?.reduce((min, point) => Math.min(min, point.temperature), Infinity);
-  const precipitationTotal = formatted?.reduce((sum, point) => sum + point.precipitation, 0) ?? 0;
+  const temperatureHigh = formatted?.reduce(
+    (max, point) => Math.max(max, point.temperature),
+    -Infinity
+  );
+  const temperatureLow = formatted?.reduce(
+    (min, point) => Math.min(min, point.temperature),
+    Infinity
+  );
+  const precipitationTotal =
+    formatted?.reduce((sum, point) => sum + point.precipitation, 0) ?? 0;
 
   return (
     <div className="glass-card space-y-4">
@@ -56,19 +69,25 @@ const WeatherForecastCard = ({ title, subtitle, data, loading, horizonLabel }: P
         <>
           <div className="grid gap-3 rounded-3xl border border-white/5 bg-white/5 px-4 py-3 text-sm text-slate-200 md:grid-cols-3">
             <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400">High</p>
+              <p className="text-xs uppercase tracking-widest text-slate-400">
+                High
+              </p>
               <p className="text-lg font-semibold text-white">
                 {temperatureHigh?.toFixed(1)}°C
               </p>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400">Low</p>
+              <p className="text-xs uppercase tracking-widest text-slate-400">
+                Low
+              </p>
               <p className="text-lg font-semibold text-white">
                 {temperatureLow?.toFixed(1)}°C
               </p>
             </div>
             <div>
-              <p className="text-xs uppercase tracking-widest text-slate-400">Precip.</p>
+              <p className="text-xs uppercase tracking-widest text-slate-400">
+                Precip.
+              </p>
               <p className="text-lg font-semibold text-white">
                 {precipitationTotal.toFixed(1)} mm
               </p>
@@ -78,13 +97,24 @@ const WeatherForecastCard = ({ title, subtitle, data, loading, horizonLabel }: P
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={formatted} margin={{ left: 12, right: 12 }}>
                 <defs>
-                  <linearGradient id="precipGradient" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient
+                    id="precipGradient"
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="1"
+                  >
                     <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.5} />
                     <stop offset="100%" stopColor="#0f172a" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
-                <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 12 }} axisLine={false} tickLine={false} />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fill: "#94a3b8", fontSize: 12 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
                 <YAxis
                   yAxisId="temperature"
                   orientation="left"
