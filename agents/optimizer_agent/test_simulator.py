@@ -370,8 +370,10 @@ class RollingMPCSimulator:
         window_size = 10  # Track last N steps for error analysis
         
         while current_time <= end_time:
-            # Get current state from historical data (for inflow, price, etc.)
-            current_state = self.data_loader.get_state_at_time(current_time)
+            # Get current state from historical data (for environmental inputs only: inflow, price, L1)
+            # NOTE: Do NOT use historical pump_states - they represent the OLD strategy with violations
+            # Pump states will come from previous optimization results (for continuity) or defaults
+            current_state = self.data_loader.get_state_at_time(current_time, include_pump_states=False)
             if current_state is None:
                 # Skip if no data
                 current_time += timedelta(minutes=self.reoptimize_interval_minutes)
@@ -380,6 +382,27 @@ class RollingMPCSimulator:
             # Update simulated L1 (in real MPC, this would come from plant/simulator)
             # For testing, we use historical L1 but could simulate it forward
             current_state.l1_m = simulated_l1
+            
+            # Set pump states from previous optimization result (for continuity constraints)
+            # This is what the optimizer needs to know: which pumps were on/off in the previous step
+            if len(simulation.results) > 0:
+                prev_result = simulation.results[-1]
+                if prev_result.optimization_result.success and prev_result.optimization_result.schedules:
+                    # Get pump states from previous optimization's first step
+                    # Map schedules to pump_states format: (pump_id, is_on, frequency_hz)
+                    prev_pump_states = {}
+                    for schedule in prev_result.optimization_result.schedules[:len(current_state.pump_states)]:
+                        prev_pump_states[schedule.pump_id] = (schedule.pump_id, schedule.is_on, schedule.frequency_hz)
+                    
+                    # Update current_state pump_states with previous optimization results
+                    updated_pump_states = []
+                    for pump_id, _, _ in current_state.pump_states:
+                        if pump_id in prev_pump_states:
+                            updated_pump_states.append(prev_pump_states[pump_id])
+                        else:
+                            updated_pump_states.append((pump_id, False, 0.0))
+                    current_state.pump_states = updated_pump_states
+            # else: use default pump states (all off) from data loader
             
             # Track forecast errors from previous step (compare forecast vs actual)
             if len(simulation.results) > 0:
@@ -545,6 +568,52 @@ class RollingMPCSimulator:
             ]
             log_table(logger, ["Parameter", "Value", "Range/Status"], system_state_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             
+            # Log constraints table
+            l1_min = self.optimizer.constraints.l1_min_m
+            l1_max = self.optimizer.constraints.l1_max_m
+            l1_current = current_state.l1_m
+            
+            # Check individual constraint compliance
+            l1_above_min = l1_current >= l1_min
+            l1_below_max = l1_current <= l1_max
+            l1_in_range = l1_above_min and l1_below_max
+            
+            # Check pump constraints
+            num_active_pumps = len([s for s in current_state.pump_states if s[1]])  # Count pumps that are ON
+            min_pumps_ok = num_active_pumps >= self.optimizer.constraints.min_pumps_on
+            
+            # Check frequency constraints for active pumps
+            freq_ok = True
+            freq_violations = []
+            for pump_id, is_on, freq in current_state.pump_states:
+                if is_on:
+                    # Check if frequency is within valid range (47.8 - 50.0 Hz)
+                    if freq < 47.8 or freq > 50.0:
+                        freq_ok = False
+                        freq_violations.append(f"{pump_id}: {freq:.1f} Hz")
+            
+            constraints_rows = [
+                ["L1 Min", f"{l1_min:.2f} m", f"{'✓ OK' if l1_above_min else '✗ VIOLATED'}"],
+                ["L1 Max", f"{l1_max:.2f} m", f"{'✓ OK' if l1_below_max else '✗ VIOLATED'}"],
+                ["L1 Current", f"{l1_current:.2f} m", f"{'✓ IN RANGE' if l1_in_range else '✗ VIOLATION'}"],
+                ["Min Pumps On", f"{self.optimizer.constraints.min_pumps_on}", f"{'✓ OK' if min_pumps_ok else f'✗ VIOLATED (only {num_active_pumps})'}"],
+                ["Active Pumps", f"{num_active_pumps}", f"{'✓' if min_pumps_ok else '✗'}"],
+                ["Min On Duration", f"{self.optimizer.constraints.min_pump_on_duration_minutes} min", "⚠ Time-based"],
+                ["Min Off Duration", f"{self.optimizer.constraints.min_pump_off_duration_minutes} min", "⚠ Time-based"],
+                ["Pump Frequency", f"47.8-50.0 Hz", f"{'✓ OK' if freq_ok else '✗ VIOLATED (' + ', '.join(freq_violations) + ')'}"],
+                ["Allow L1 Violations", f"{'Yes' if self.optimizer.constraints.allow_l1_violations else 'No'}", ""],
+            ]
+            if self.optimizer.constraints.allow_l1_violations:
+                constraints_rows.append(["Violation Tolerance", f"{self.optimizer.constraints.l1_violation_tolerance_m:.2f} m", ""])
+                constraints_rows.append(["Violation Penalty", f"{self.optimizer.constraints.l1_violation_penalty:.1f}", ""])
+            
+            # Blank line before constraints table
+            if self.suppress_prefix:
+                print()
+            else:
+                logger.info("")
+            log_table(logger, ["Constraint", "Value", "Status"], constraints_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+            
             # Log pump states as table
             pump_rows = []
             active_pumps = []
@@ -595,10 +664,27 @@ class RollingMPCSimulator:
                     ["Success", "✓" if opt_result.success else "✗"],
                     ["Solve Time", f"{opt_result.solve_time_seconds:.2f} s"],
                 ]
-                log_table(logger, ["Status", "Value"], result_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                # Add violation info if present
+                if opt_result.l1_violations > 0:
+                    result_rows.append(["L1 Violations", f"{opt_result.l1_violations}", "⚠ WARNING"])
+                    result_rows.append(["Max Violation", f"{opt_result.max_violation_m:.3f} m", "⚠ WARNING"])
+                log_table(logger, ["Status", "Value", "Note"], result_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             except Exception as e:
+                import traceback
+                error_details = traceback.format_exc()
                 logger.warning("")
-                log_boxed(logger, "OPTIMIZATION FAILED", [f"Error: {str(e)}", "Falling back to RULE_BASED mode"], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+                error_lines = [
+                    f"Error: {str(e)}",
+                    f"Error Type: {type(e).__name__}",
+                    "Falling back to RULE_BASED mode"
+                ]
+                # Add traceback if it's a division by zero error
+                if "division by zero" in str(e).lower() or "ZeroDivisionError" in str(type(e)):
+                    error_lines.append("")
+                    error_lines.append("Traceback (last 5 lines):")
+                    tb_lines = error_details.strip().split('\n')
+                    error_lines.extend(tb_lines[-5:])
+                log_boxed(logger, "OPTIMIZATION FAILED", error_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                 # Fallback on error
                 opt_result = self.optimizer.solve_optimization(
                     current_state=current_state,
@@ -647,8 +733,22 @@ class RollingMPCSimulator:
                     ]
                     if opt_result.l1_trajectory:
                         predicted_l1 = opt_result.l1_trajectory[0] if len(opt_result.l1_trajectory) > 0 else current_state.l1_m
-                        summary_rows.append(["Predicted L1 (next)", f"{predicted_l1:.2f} m"])
-                    log_table(logger, ["Metric", "Value"], summary_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                        # Check constraint compliance
+                        l1_status = "✓" if self.optimizer.constraints.l1_min_m <= predicted_l1 <= self.optimizer.constraints.l1_max_m else "✗"
+                        summary_rows.append(["Predicted L1 (next)", f"{predicted_l1:.2f} m", f"{l1_status} [{self.optimizer.constraints.l1_min_m:.1f} - {self.optimizer.constraints.l1_max_m:.1f} m]"])
+                        # Check if predicted L1 violates constraints
+                        if predicted_l1 < self.optimizer.constraints.l1_min_m:
+                            violation = self.optimizer.constraints.l1_min_m - predicted_l1
+                            summary_rows.append(["⚠ L1 Violation (below)", f"{violation:.3f} m", f"BELOW MIN ({self.optimizer.constraints.l1_min_m:.2f} m)"])
+                        elif predicted_l1 > self.optimizer.constraints.l1_max_m:
+                            violation = predicted_l1 - self.optimizer.constraints.l1_max_m
+                            summary_rows.append(["⚠ L1 Violation (above)", f"{violation:.3f} m", f"ABOVE MAX ({self.optimizer.constraints.l1_max_m:.2f} m)"])
+                    # Add overall violation summary if any
+                    if opt_result.l1_violations > 0:
+                        summary_rows.append(["⚠ Total Violations", f"{opt_result.l1_violations} steps", f"Max: {opt_result.max_violation_m:.3f} m"])
+                        # Log detailed violation info
+                        logger.warning(f"⚠ Constraint Violations: {opt_result.l1_violations} L1 violations detected (max: {opt_result.max_violation_m:.3f} m)")
+                    log_table(logger, ["Metric", "Value", "Range/Status"], summary_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
                 else:
                     log_boxed(logger, "OPTIMIZED SCHEDULE", ["No pumps active"], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
             else:
@@ -708,10 +808,38 @@ class RollingMPCSimulator:
                         print()
                     else:
                         logger.info("")
-                    # Split explanation by newlines, then each line will be word-wrapped automatically
+                    # Split explanation by newlines and ensure proper word wrapping
                     if explanation:
-                        # Split by newlines first, then each line will be word-wrapped by format_boxed_text
-                        explanation_lines = [line.strip() for line in explanation.split('\n') if line.strip()]
+                        # First split by explicit newlines, then by sentences for better line breaks
+                        # Split by double newlines first (paragraph breaks)
+                        paragraphs = [p.strip() for p in explanation.split('\n\n') if p.strip()]
+                        explanation_lines = []
+                        for para in paragraphs:
+                            # Split each paragraph by newlines (preserve intentional line breaks)
+                            para_lines = [line.strip() for line in para.split('\n') if line.strip()]
+                            for line in para_lines:
+                                # Further split very long lines by sentences for better wrapping
+                                # If a line is very long (>200 chars), split by sentence endings
+                                if len(line) > 200:
+                                    import re
+                                    sentences = re.split(r'([.!?]\s+)', line)
+                                    # Rejoin sentences in pairs to avoid too many short lines
+                                    current_sentence = ""
+                                    for i in range(0, len(sentences), 2):
+                                        if i + 1 < len(sentences):
+                                            sentence = sentences[i] + sentences[i+1]
+                                        else:
+                                            sentence = sentences[i]
+                                        if len(current_sentence) + len(sentence) > 200:
+                                            if current_sentence:
+                                                explanation_lines.append(current_sentence.strip())
+                                            current_sentence = sentence
+                                        else:
+                                            current_sentence += sentence
+                                    if current_sentence:
+                                        explanation_lines.append(current_sentence.strip())
+                                else:
+                                    explanation_lines.append(line)
                         if not explanation_lines:
                             explanation_lines = ["No explanation available"]
                     else:

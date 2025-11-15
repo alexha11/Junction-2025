@@ -91,8 +91,17 @@ class HSYDataLoader:
         if 'Electricity price 2: normal' in self.df.columns:
             self.df['Price_EUR_MWh'] = self.df['Electricity price 2: normal'] * 1000.0
 
-    def get_state_at_time(self, timestamp: datetime) -> Optional[CurrentState]:
-        """Get CurrentState object at given timestamp."""
+    def get_state_at_time(self, timestamp: datetime, include_pump_states: bool = False) -> Optional[CurrentState]:
+        """Get CurrentState object at given timestamp.
+        
+        Args:
+            timestamp: Time to get state for
+            include_pump_states: If True, include pump states from historical data (for reference only).
+                                 If False, use empty/default pump states (data represents old strategy with violations).
+        
+        Note: Historical pump states represent the OLD strategy with constraint violations.
+              For optimization, pump states should come from previous optimization results, not historical data.
+        """
         if self.df is None:
             return None
         
@@ -105,31 +114,37 @@ class HSYDataLoader:
         row = self.df.iloc[closest_idx]
         actual_time = self.df.index[closest_idx]
         
-        # Extract pump states
+        # Extract pump states ONLY if requested (for reference/comparison)
+        # By default, don't use historical pump states as they represent the old strategy
         pump_states: List[Tuple[str, bool, float]] = []
-        for pump_num in ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '2.3', '2.4']:
-            flow_col = f'Pump flow {pump_num}'
-            freq_col = f'Pump frequency {pump_num}'
-            
-            # Map pump ID from data format (1.1, 1.2) to optimizer format (P1, P2, etc.)
-            # Pumps 1.1-1.4 become P1-P4, pumps 2.1-2.4 become P5-P8
-            if pump_num.startswith('1.'):
-                pump_id = f"P{int(pump_num.split('.')[1])}"
-            else:  # 2.x
-                pump_id = f"P{int(pump_num.split('.')[1]) + 4}"
-            
-            flow = row.get(f'{flow_col}_m3_s', row.get(flow_col, 0.0))
-            freq = row.get(freq_col, 0.0)
-            is_on = flow > 0.01 and freq > 10.0  # Threshold for pump being on
-            
-            pump_states.append((pump_id, bool(is_on), float(freq)))
+        if include_pump_states:
+            for pump_num in ['1.1', '1.2', '1.3', '1.4', '2.1', '2.2', '2.3', '2.4']:
+                flow_col = f'Pump flow {pump_num}'
+                freq_col = f'Pump frequency {pump_num}'
+                
+                # Map pump ID from data format (1.1, 1.2) to optimizer format (P1, P2, etc.)
+                # Pumps 1.1-1.4 become P1-P4, pumps 2.1-2.4 become P5-P8
+                if pump_num.startswith('1.'):
+                    pump_id = f"P{int(pump_num.split('.')[1])}"
+                else:  # 2.x
+                    pump_id = f"P{int(pump_num.split('.')[1]) + 4}"
+                
+                flow = row.get(f'{flow_col}_m3_s', row.get(flow_col, 0.0))
+                freq = row.get(freq_col, 0.0)
+                is_on = flow > 0.01 and freq > 10.0  # Threshold for pump being on
+                
+                pump_states.append((pump_id, bool(is_on), float(freq)))
+        else:
+            # Default: all pumps off (will be set by optimizer)
+            for pump_id in ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8']:
+                pump_states.append((pump_id, False, 0.0))
         
         return CurrentState(
             timestamp=actual_time.to_pydatetime(),
             l1_m=float(row.get('Water level in tunnel L1', 0.0)),
             inflow_m3_s=float(row.get('F1_m3_s', row.get('Inflow to tunnel F1', 0.0) / 900.0)),
             outflow_m3_s=float(row.get('F2_m3_s', row.get('Sum of pumped flow to WWTP F2', 0.0) / 900.0)),
-            pump_states=pump_states,
+            pump_states=pump_states,  # Empty/default by default - represents old strategy violations
             price_eur_mwh=float(row.get('Price_EUR_MWh', row.get('Electricity price 2: normal', 0.0) * 1000.0)),
         )
 
@@ -280,22 +295,23 @@ class HSYDataLoader:
             power_col = f'Pump power uptake {pump_num}'
             freq_col = f'Pump frequency {pump_num}'
             
-            # Get max values from historical data
+            # Get max values from historical data (operational parameters)
             max_flow_m3_s = (self.df[f'{flow_col}_m3_s'].max() 
                            if f'{flow_col}_m3_s' in self.df.columns 
                            else self.df[flow_col].max() / 3600.0)
             max_power_kw = self.df[power_col].max()
-            max_freq_hz = self.df[freq_col].max()
-            # Get minimum frequency when pump is actually operating (filter low values from startup/shutdown)
-            # Ensure minimum is at least 47.8 Hz (actual operating minimum)
-            data_min_freq = self.df[freq_col][self.df[freq_col] > 40.0].min()  # Filter very low values
-            min_freq_hz = max(float(data_min_freq) if not np.isnan(data_min_freq) else 47.8, 47.8)
+            
+            # Frequency limits are pump hardware specifications, not operational data
+            # Use fixed standard values (don't extract from historical operational data)
+            # Historical frequency data shows what was used, not what the pump is capable of
+            min_freq_hz = 47.8  # Standard minimum operating frequency for pumps
+            max_freq_hz = 50.0  # Standard maximum operating frequency for pumps
             
             specs[pump_id] = {
                 'max_flow_m3_s': float(max_flow_m3_s),
                 'max_power_kw': float(max_power_kw),
-                'max_frequency_hz': float(max_freq_hz),
-                'min_frequency_hz': min_freq_hz,  # Ensured to be at least 47.8 Hz
+                'max_frequency_hz': max_freq_hz,  # Fixed hardware specification
+                'min_frequency_hz': min_freq_hz,  # Fixed hardware specification
             }
         
         return specs

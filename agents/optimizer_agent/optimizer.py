@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import List, Optional, Tuple, Any, Dict
 
 import numpy as np
 from ortools.linear_solver import pywraplp
+
+logger = logging.getLogger(__name__)
 
 
 class OptimizationMode(str, Enum):
@@ -362,7 +365,7 @@ class MPCOptimizer:
                 return divergence
         
         # Check inflow surge (if we have previous forecast)
-        if previous_forecast_inflow is not None and previous_forecast_inflow > 0:
+        if previous_forecast_inflow is not None and previous_forecast_inflow > 1e-6:  # Use threshold to avoid division by tiny values
             inflow_error_pct = abs(current_state.inflow_m3_s - previous_forecast_inflow) / previous_forecast_inflow * 100
             if current_state.inflow_m3_s > previous_forecast_inflow * 1.3:  # 30% higher
                 divergence = {
@@ -374,7 +377,7 @@ class MPCOptimizer:
                 return divergence
         
         # Check price spike (if we have previous forecast)
-        if previous_forecast_price is not None and previous_forecast_price > 0:
+        if previous_forecast_price is not None and previous_forecast_price > 1e-6:  # Use threshold to avoid division by tiny values
             price_error_pct = abs(current_state.price_eur_mwh - previous_forecast_price) / previous_forecast_price * 100
             if current_state.price_eur_mwh > previous_forecast_price * 1.5:  # 50% higher
                 divergence = {
@@ -569,6 +572,14 @@ class MPCOptimizer:
         strategic_plan: Optional[Any] = None,
     ) -> OptimizationResult:
         """Solve full optimization with all constraints."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        start_time = time.time()
+        
+        # Calculate risk level for explanation (needed for explanation string)
+        risk_level = self.assess_risk_level(current_state, forecast)
+        
         solver = pywraplp.Solver.CreateSolver("SCIP")
         if not solver:
             return OptimizationResult(
@@ -586,15 +597,28 @@ class MPCOptimizer:
         # Use all available CPU cores for parallel branch-and-bound search
         num_threads = getattr(self, 'num_threads', os.cpu_count() or 4)  # Use instance value or default
         # Set SCIP parallel parameters separately (must use '=' format)
+        # Note: SCIP parameter names may vary by version - disable if not available
         try:
             solver.SetSolverSpecificParametersAsString("parallel/mode = 1")
-            solver.SetSolverSpecificParametersAsString(f"parallel/numsolver = {num_threads}")
         except Exception as e:
             # If parallel mode fails, continue without it
-            logger.warning(f"Failed to set SCIP parallel parameters: {e}")
+            logger.debug(f"Failed to set SCIP parallel/mode: {e}")
         
-        import logging
-        logger = logging.getLogger(__name__)
+        # Try to set number of threads (parameter name may vary by SCIP version)
+        try:
+            # Try different possible parameter names
+            for param_name in [f"parallel/maxnthreads = {num_threads}", 
+                             f"parallel/numsolver = {num_threads}",
+                             f"threads = {num_threads}"]:
+                try:
+                    solver.SetSolverSpecificParametersAsString(param_name)
+                    break
+                except:
+                    continue
+        except Exception as e:
+            # If setting threads fails, continue without it
+            logger.debug(f"Failed to set SCIP thread count: {e}")
+        
         logger.debug(f"SCIP solver: Parallel mode enabled with {num_threads} threads (Option C speedup)")
         
         solver.SetTimeLimit(timeout_seconds * 1000)  # Convert to milliseconds
@@ -689,6 +713,9 @@ class MPCOptimizer:
                 # Use linear approximation: flow proportional to frequency
                 # Division by constant is allowed: flow = freq / max_freq * max_flow
                 # Flow bounds: flow proportional to frequency when pump is on
+                # Safety check: ensure max_frequency_hz is valid (avoid division by zero)
+                if pump_spec.max_frequency_hz < 1.0:
+                    raise ValueError(f"Invalid max_frequency_hz={pump_spec.max_frequency_hz} for pump {pid}. Must be >= 1.0 Hz")
                 max_freq_inv = 1.0 / pump_spec.max_frequency_hz
                 solver.Add(
                     pump_flow[pid][t] >= (pump_freq[pid][t] * max_freq_inv) * pump_spec.max_flow_m3_s * 0.9
@@ -702,6 +729,9 @@ class MPCOptimizer:
                 # Use improved approximation: power ≈ base + slope * (freq - min_freq)
                 # Where slope is steeper to approximate cubic behavior
                 
+                # Safety check: ensure max_frequency_hz is valid before division
+                if pump_spec.max_frequency_hz < 1.0:
+                    raise ValueError(f"Invalid max_frequency_hz={pump_spec.max_frequency_hz} for pump {pid}. Must be >= 1.0 Hz")
                 min_freq_ratio = pump_spec.min_frequency_hz / pump_spec.max_frequency_hz
                 # Base power at minimum frequency (approximate cubic: ~85% at 95% freq)
                 base_power_ratio = min_freq_ratio ** 2.5  # 0.95^2.5 ≈ 0.87
@@ -851,55 +881,65 @@ class MPCOptimizer:
                 energy_kwh = pump_power[pid][t] * dt_hours
                 cost_obj += energy_kwh * price
         
-        # Smoothness: minimize F2 variance (quadratic penalty)
+        # Smoothness: minimize F2 variance (linear approximation)
+        # Use pairwise deviation instead of deviation from mean (linear programming compatible)
+        # Minimize differences between consecutive outflow values
         outflow_vars = [
             sum(pump_flow[pid][t] for pid in pump_ids) for t in range(num_steps)
         ]
         if len(outflow_vars) > 1:
-            avg_outflow = sum(outflow_vars) / len(outflow_vars)
-            for outflow in outflow_vars:
-                smoothness_obj += (outflow - avg_outflow) ** 2
+            # Minimize deviation between consecutive time steps
+            for t in range(len(outflow_vars) - 1):
+                # Linear approximation: use absolute difference between consecutive steps
+                diff_var = solver.NumVar(0.0, solver.infinity(), f"smooth_diff_{t}")
+                solver.Add(diff_var >= outflow_vars[t] - outflow_vars[t + 1])
+                solver.Add(diff_var >= outflow_vars[t + 1] - outflow_vars[t])
+                smoothness_obj += diff_var
         
         # Fairness: balance pump hours more aggressively
-        # Use absolute deviation from mean for better fairness
+        # Use pairwise deviation instead of deviation from mean (linear programming compatible)
+        # Minimize differences between pump operating hours
         pump_hours = [
             sum(pump_on[pid][t] for t in range(num_steps)) for pid in pump_ids
         ]
         if len(pump_hours) > 1:
-            avg_hours = sum(pump_hours) / len(pump_hours)
-            for hours in pump_hours:
-                # Use squared deviation but scale by number of pumps for fairness
-                fairness_obj += ((hours - avg_hours) / len(pump_hours)) ** 2
+            # Minimize deviation between pairs of pumps
+            for i in range(len(pump_hours)):
+                for j in range(i + 1, len(pump_hours)):
+                    # Linear approximation: use absolute difference between pump pairs
+                    diff_var = solver.NumVar(0.0, solver.infinity(), f"fairness_diff_{i}_{j}")
+                    solver.Add(diff_var >= pump_hours[i] - pump_hours[j])
+                    solver.Add(diff_var >= pump_hours[j] - pump_hours[i])
+                    fairness_obj += diff_var
         
         # Specific energy: minimize kWh/m³ (encourage efficient operation)
-        total_flow = 0.0
+        # Linear approximation: minimize deviation from target specific energy ratio
+        # Since we can't divide directly or use quadratic terms, use linear approximation
+        target_specific_energy = 0.4  # kWh/m³ target (will be tuned)
         for t in range(num_steps):
+            dt_hours = self.time_step_minutes / 60.0
             for pid in pump_ids:
-                total_flow += pump_flow[pid][t] * (self.time_step_minutes / 60.0)  # Convert to m³
-        
-        if total_flow > 0.01:  # Avoid division by zero
-            # Minimize ratio of energy to flow (specific energy)
-            # Since we can't divide directly, we minimize energy while maximizing flow
-            # Approximate by: specific_energy_obj = total_energy / total_flow
-            # Use inverse relationship: minimize energy / flow ≈ minimize (energy - flow * target_ratio)
-            target_specific_energy = 0.4  # kWh/m³ target (will be tuned)
-            for t in range(num_steps):
-                dt_hours = self.time_step_minutes / 60.0
-                for pid in pump_ids:
-                    energy = pump_power[pid][t] * dt_hours
-                    flow_m3 = pump_flow[pid][t] * dt_hours
-                    # Penalize deviation from target specific energy
-                    specific_energy_obj += (energy - flow_m3 * target_specific_energy) ** 2
+                energy = pump_power[pid][t] * dt_hours
+                flow_m3 = pump_flow[pid][t] * dt_hours
+                target_energy = flow_m3 * target_specific_energy
+                # Linear approximation: use absolute deviation instead of squared
+                dev_var = solver.NumVar(0.0, solver.infinity(), f"spec_energy_dev_{pid}_{t}")
+                solver.Add(dev_var >= energy - target_energy)
+                solver.Add(dev_var >= target_energy - energy)
+                specific_energy_obj += dev_var
         
         # Safety: penalize being close to bounds and violations
-        # Use quadratic penalty that encourages staying away from bounds
+        # Use linear penalty that encourages staying away from bounds (linear programming compatible)
         l1_safe_center = (self.constraints.l1_min_m + self.constraints.l1_max_m) / 2
         violation_penalty_obj = 0.0
         
         for t in range(num_steps):
-            # Quadratic penalty for deviation from safe center (SCIP supports quadratic)
+            # Linear approximation: use absolute deviation from safe center instead of squared
             # This encourages staying in the middle range
-            safety_obj += (l1[t] - l1_safe_center) ** 2
+            dev_var = solver.NumVar(0.0, solver.infinity(), f"l1_safety_dev_{t}")
+            solver.Add(dev_var >= l1[t] - l1_safe_center)
+            solver.Add(dev_var >= l1_safe_center - l1[t])
+            safety_obj += dev_var
             
             # Linear penalty terms for being close to bounds
             # Distance to minimum (larger penalty when closer to min)
@@ -936,15 +976,17 @@ class MPCOptimizer:
         # Solve
         status = solver.Solve()
         
+        # Initialize variables (will be used in both success and failure paths)
+        schedules = []
+        l1_traj = []
+        total_energy = 0.0
+        total_cost = 0.0
+        violations = 0
+        max_violation = 0.0
+        violation_details = []  # Track detailed violation info
+        
         if status in (pywraplp.Solver.OPTIMAL, pywraplp.Solver.FEASIBLE):
             # Extract solution
-            schedules = []
-            l1_traj = []
-            total_energy = 0.0
-            total_cost = 0.0
-            violations = 0
-            max_violation = 0.0
-            
             for t in range(num_steps):
                 l1_val = l1[t].solution_value()
                 l1_traj.append(l1_val)
@@ -954,10 +996,24 @@ class MPCOptimizer:
                     violations += 1
                     violation_mag = self.constraints.l1_min_m - l1_val
                     max_violation = max(max_violation, violation_mag)
+                    violation_details.append({
+                        'time_step': t,
+                        'l1_value': l1_val,
+                        'constraint': self.constraints.l1_min_m,
+                        'violation': violation_mag,
+                        'type': 'below_min'
+                    })
                 elif l1_val > self.constraints.l1_max_m:
                     violations += 1
                     violation_mag = l1_val - self.constraints.l1_max_m
                     max_violation = max(max_violation, violation_mag)
+                    violation_details.append({
+                        'time_step': t,
+                        'l1_value': l1_val,
+                        'constraint': self.constraints.l1_max_m,
+                        'violation': violation_mag,
+                        'type': 'above_max'
+                    })
                 
                 for pid in pump_ids:
                     is_on = pump_on[pid][t].solution_value() > 0.5
@@ -987,6 +1043,19 @@ class MPCOptimizer:
             explanation = f"Optimized schedule using full MPC (risk: {risk_level.value})"
             if violations > 0:
                 explanation += f". Warning: {violations} L1 violations (max: {max_violation:.3f}m)"
+                # Log detailed violations
+                import logging
+                opt_logger = logging.getLogger(__name__)
+                opt_logger.warning(f"L1 Constraint Violations Detected: {violations} violations in {num_steps} steps")
+                for v in violation_details[:5]:  # Log first 5 violations
+                    step_time = v['time_step'] * self.time_step_minutes
+                    opt_logger.warning(
+                        f"  Step {v['time_step']} ({step_time}min): L1={v['l1_value']:.3f}m, "
+                        f"Constraint={'min' if v['type'] == 'below_min' else 'max'}={v['constraint']:.3f}m, "
+                        f"Violation={v['violation']:.3f}m"
+                    )
+                if len(violation_details) > 5:
+                    opt_logger.warning(f"  ... and {len(violation_details) - 5} more violations")
             
             return OptimizationResult(
                 success=True,

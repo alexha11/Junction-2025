@@ -26,13 +26,15 @@ def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
     pumps = []
     for pump_id in sorted(pump_specs_data.keys()):
         spec_data = pump_specs_data[pump_id]
+        # Frequency limits are hardware specifications (fixed values)
+        # Only extract operational parameters (flow, power) from data
         pumps.append(
             PumpSpec(
                 pump_id=pump_id,
                 max_flow_m3_s=spec_data['max_flow_m3_s'],
                 max_power_kw=spec_data['max_power_kw'],
-                min_frequency_hz=spec_data.get('min_frequency_hz', 47.8),
-                max_frequency_hz=spec_data.get('max_frequency_hz', 50.0),
+                min_frequency_hz=47.8,  # Fixed hardware specification
+                max_frequency_hz=50.0,  # Fixed hardware specification
                 preferred_freq_min_hz=47.8,
                 preferred_freq_max_hz=49.0,
             )
