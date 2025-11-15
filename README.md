@@ -82,6 +82,12 @@ Stop everything with `docker compose down` (append `-v` to drop volumes). To see
 - Use the `backend/DEBUGGING.md` cheat sheet (mirrors `docs/CURL.md`) for ready-made `curl` smoke tests plus logging tips. Running commands like `curl -sS "$BASE_URL/system/forecasts" | jq` while tailing the backend logs makes it easy to verify new deployments.
 - Control verbosity with `LOG_LEVEL` (defaults to `INFO`). Example: `LOG_LEVEL=DEBUG uvicorn app.main:app --reload`.
 - For end-to-end guidance across backend, agents, and frontend test suites, see `docs/TESTING.md`.
+- Backend API routes now have deterministic coverage via `backend/tests/conftest.py` (stubbed `AgentsCoordinator`) and `backend/tests/test_api_routes.py`. Run them quickly while iterating with:
+
+```bash
+cd backend
+pytest tests/test_api_routes.py -q
+```
 
 ## Next Steps
 
