@@ -1,20 +1,27 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 
 from app.api.routes import alerts, system
 from app.config import get_settings
+from app.logging_config import configure_logging
 from app.services.agents_client import AgentsCoordinator
 from app.services.scheduler import OptimizationScheduler
 
 _agents = AgentsCoordinator()
 _scheduler: OptimizationScheduler | None = None
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     global _scheduler
     settings = get_settings()
+    logger.info(
+        "Starting optimization scheduler interval_minutes=%s",
+        settings.optimizer_interval_minutes,
+    )
     _scheduler = OptimizationScheduler(
         agents=_agents, interval_minutes=settings.optimizer_interval_minutes
     )
@@ -23,11 +30,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         yield
     finally:
         if _scheduler:
+            logger.info("Shutting down optimization scheduler")
             _scheduler.shutdown()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings.log_level)
+    logger.info(
+        "Creating FastAPI application title=%s version=%s",
+        settings.api_title,
+        settings.api_version,
+    )
     application = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=lifespan)
     application.include_router(system.router)
     application.include_router(system.weather_router)

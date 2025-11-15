@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
 from typing import List
 
 import httpx
@@ -26,8 +27,12 @@ class AgentsCoordinator:
     stack can be developed end-to-end without external dependencies.
     """
 
+    def __init__(self) -> None:
+        self._logger = logging.getLogger(self.__class__.__name__)
+
     async def get_system_state(self) -> SystemState:
         now = datetime.utcnow()
+        self._logger.debug("Generating synthetic system state timestamp=%s", now.isoformat())
         pumps = [
             PumpStatus(
                 pump_id=f"P{i+1}",
@@ -49,6 +54,7 @@ class AgentsCoordinator:
     async def get_forecasts(self) -> List[ForecastSeries]:
         now = datetime.utcnow()
         horizon = 12
+        self._logger.info("Building forecast bundle horizon_hours=%s", horizon)
         points = [
             ForecastPoint(timestamp=now + timedelta(hours=i), value=2.0 + i * 0.1)
             for i in range(horizon)
@@ -64,6 +70,7 @@ class AgentsCoordinator:
 
     async def get_schedule_recommendation(self) -> ScheduleRecommendation:
         now = datetime.utcnow()
+        self._logger.info("Producing schedule recommendation generated_at=%s", now.isoformat())
         entries = [
             ScheduleEntry(
                 pump_id="P1",
@@ -92,17 +99,38 @@ class AgentsCoordinator:
         settings = get_settings()
         url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
         payload = {"lookahead_hours": lookahead_hours, "location": location}
+        self._logger.info(
+            "Requesting weather forecast url=%s lookahead_hours=%s location=%s",
+            url,
+            lookahead_hours,
+            location,
+        )
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 data = response.json()
+                self._logger.debug(
+                    "Weather agent responded successfully points=%s",
+                    len(data),
+                )
                 return [WeatherPoint(**point) for point in data]
-        except Exception:  # noqa: BLE001
-            return self._fallback_weather_series(lookahead_hours)
+        except httpx.HTTPStatusError as exc:
+            self._logger.warning(
+                "Weather agent returned error status %s for %s",
+                exc.response.status_code,
+                url,
+            )
+        except httpx.RequestError as exc:
+            self._logger.warning("Weather agent request failed url=%s error=%s", url, exc)
+        except Exception:
+            self._logger.exception("Unexpected error while requesting weather forecast")
+
+        return self._fallback_weather_series(lookahead_hours)
 
     def _fallback_weather_series(self, hours: int) -> List[WeatherPoint]:
         now = datetime.utcnow()
+        self._logger.info("Falling back to synthetic weather series hours=%s", hours)
         return [
             WeatherPoint(
                 timestamp=now + timedelta(hours=i),

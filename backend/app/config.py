@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     api_title: str = "HSY Optimization Backend"
     api_version: str = "0.1.0"
     optimizer_interval_minutes: int = 15
+    log_level: str = "INFO"
 
     redis_url: str = "redis://localhost:6379/0"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hsy"
