@@ -63,7 +63,7 @@ const TopBar: FC<Props> = ({ alertsCount, scheduleGeneratedAt }) => {
           </div>
         </div>
       </div>
-      <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-200">
+      {/* <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-200">
         {navLinks.map((link) => (
           <a
             key={link.label}
@@ -75,7 +75,7 @@ const TopBar: FC<Props> = ({ alertsCount, scheduleGeneratedAt }) => {
             {link.label}
           </a>
         ))}
-      </nav>
+      </nav> */}
     </header>
   );
 };

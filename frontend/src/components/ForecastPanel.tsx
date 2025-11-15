@@ -53,7 +53,7 @@ const ForecastPanel = ({ prices }: Props) => {
     <div className="glass-card">
       <div className="flex items-center justify-between">
         <div>
-          <p className="section-title">Forecast horizon</p>
+          <p className="section-title">Electricity forecast</p>
           <h2 className="text-2xl font-semibold text-white">Next 24 hours</h2>
         </div>
         <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">
