@@ -35,7 +35,7 @@ async def main():
 
                 # Test reading a specific variable
                 result = await session.call_tool(
-                    "read_opcua_variable", {"variable_name": "WaterLevelInTunnelL2"}
+                    "read_opcua_variable", {"variable_name": "WaterLevelInTunnel.L2.m"}
                 )
                 print(f"Read result: {extract_text_content(result)}")
 
@@ -49,14 +49,14 @@ async def main():
                 # Test reading history from variable
                 result = await session.call_tool(
                     "get_variable_history",
-                    {"variable_name": "WaterLevelInTunnelL2", "hours_back": 1},
+                    {"variable_name": "WaterLevelInTunnel.L2.m", "hours_back": 1},
                 )
                 print(f"History result: {extract_text_content(result)}")
 
                 # Test aggregating variable data
                 result = await session.call_tool(
                     "aggregate_variable_data",
-                    {"variable_name": "WaterLevelInTunnelL2", "hours_back": 1},
+                    {"variable_name": "WaterLevelInTunnel.L2.m", "hours_back": 1},
                 )
                 print(f"Aggregate result: {extract_text_content(result)}")
 
@@ -64,7 +64,10 @@ async def main():
                 result = await session.call_tool(
                     "aggregate_multiple_variables_data",
                     {
-                        "variable_names": ["WaterLevelInTunnelL2", "InflowToTunnelF1"],
+                        "variable_names": [
+                            "WaterLevelInTunnel.L2.m",
+                            "InflowToTunnel.F1.m3hper15min",
+                        ],
                         "hours_back": 1,
                     },
                 )

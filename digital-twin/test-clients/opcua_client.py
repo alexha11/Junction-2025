@@ -20,7 +20,7 @@ try:
         variables = pump_station.get_children()
         print(f"Found {len(variables)} variables")
 
-        for i, var in enumerate(variables[:5]):
+        for i, var in enumerate(variables[:50]):
             try:
                 value = var.get_value()
                 name = var.get_browse_name()

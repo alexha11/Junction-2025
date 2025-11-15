@@ -6,5 +6,5 @@ echo "OPC UA Client"
 python opcua_client.py
 
 echo ""
-echo "MPC Client"
+echo "MCP Client"
 python mcp_client.py
