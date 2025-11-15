@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1
+ARG VITE_WEATHER_AGENT_URL="/api/weather/forecast"
+
 FROM node:20-alpine AS build
+ARG VITE_WEATHER_AGENT_URL
+ENV VITE_WEATHER_AGENT_URL=${VITE_WEATHER_AGENT_URL}
 WORKDIR /app
 
 COPY package*.json ./

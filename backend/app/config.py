@@ -10,9 +10,6 @@ class Settings(BaseSettings):
     optimizer_interval_minutes: int = 15
     log_level: str = "INFO"
 
-    redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/hsy"
-
     weather_agent_url: str = "http://localhost:8101"
     price_agent_url: str = "http://localhost:8102"
     status_agent_url: str = "http://localhost:8103"
