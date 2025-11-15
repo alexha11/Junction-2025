@@ -28,7 +28,7 @@ This guide walks through every file inside `agents/`, explaining how the MCP-sty
 ## Electricity Price Agent (`agents/price_agent/main.py`)
 
 - **Classes**: `PriceRequest`, `PricePoint`, `ElectricityPriceAgent`.
-- **Tools**: `get_electricity_price_forecast(PriceRequest)` produces an increasing EUR/MWh curve for the lookahead window.
+- **Tools**: `get_electricity_price_forecast(PriceRequest)` produces an increasing C/kWh curve for the lookahead window.
 - **Usage**: Run the module to print the registered tool. Replace the body with Nord Pool API fetches and convert the response into `PricePoint` entries.
 
 ## Inflow Forecast Agent (`agents/inflow_agent/main.py`)

@@ -19,7 +19,7 @@ interface Props {
   prices?: Series;
 }
 
-const ForecastPanel = ({ inflow, prices }: Props) => (
+const ForecastPanel = ({ prices }: Props) => (
   <div className="glass-card">
     <div className="flex items-center justify-between">
       <div>
@@ -31,51 +31,7 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
       </span>
     </div>
     <div className="mt-6 space-y-8">
-      <div>
-        <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
-          <span>Inflow F1 ({inflow?.unit ?? "m³/s"})</span>
-          <span className="text-brand-accent">hydrology</span>
-        </div>
-        <div className="h-56">
-          {inflow ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={inflow.points}>
-                <XAxis dataKey="timestamp" hide />
-                <YAxis
-                  domain={[0, "dataMax + 1"]}
-                  width={32}
-                  stroke={BRAND_COLORS.gridStrong}
-                />
-                <Tooltip
-                  labelFormatter={(value) =>
-                    new Date(value).toLocaleTimeString()
-                  }
-                  contentStyle={{
-                    background: BRAND_COLORS.surfaceAlt,
-                    borderRadius: 16,
-                    border: `1px solid ${brandColorWithOpacity(
-                      "accent",
-                      0.25
-                    )}`,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke={BRAND_COLORS.accent}
-                  strokeWidth={3}
-                  dot={false}
-                  strokeLinecap="round"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">
-              Loading inflow forecast...
-            </div>
-          )}
-        </div>
-      </div>
+      <div></div>
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
           <span>Electricity price ({prices?.unit ?? "EUR"})</span>

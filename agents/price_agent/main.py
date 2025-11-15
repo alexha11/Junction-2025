@@ -82,7 +82,7 @@ class ElectricityPriceAgent(BaseMCPAgent):
         # 3. Filter the combined data to match the request
         forecast_points = []
         for price_data in all_prices_data:
-            # 'value' is the price in EUR/MWh
+            # 'value' is the price in C/kWh
             # 'start_time' is a datetime object
             price_timestamp = price_data['start_time']
             price_value = price_data['value']

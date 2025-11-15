@@ -56,7 +56,7 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
         <Stat label="Inflow F1 (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
         <Stat label="Outflow F2 (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
         <Stat
-          label="Price (EUR/MWh)"
+          label="Price (C/kWh)"
           value={state.electricity_price_eur_mwh.toFixed(1)}
         />
       </div>

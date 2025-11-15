@@ -67,7 +67,7 @@ const fallbackInflowSeries = {
 
 const fallbackPriceSeries = {
   metric: "Electricity price",
-  unit: "EUR/MWh",
+  unit: "C/kWh",
   points: Array.from({ length: 12 }).map((_, index) => ({
     timestamp: new Date(Date.now() + index * 60 * 60 * 1000).toISOString(),
     value: 65 + index * 2,
