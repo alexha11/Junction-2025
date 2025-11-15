@@ -58,7 +58,7 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
         />
       </div>
     )}
-    <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5">
+    <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5 scroll-glow">
       <table className="w-full text-sm text-slate-300">
         <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
           <tr>

@@ -132,6 +132,23 @@ const OperationsPortal = () => {
         schedule={scheduleData ?? schedule}
         alertsCount={alerts.length}
       />
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2 space-y-6">
+          <SystemOverviewCard state={state} loading={systemLoading} />
+          <ForecastPanel inflow={inflow} prices={price} />
+          <RecommendationPanel
+            schedule={scheduleData ?? schedule}
+            loading={scheduleLoading}
+          />
+        </div>
+        <div className="space-y-6">
+          <AlertsBanner alerts={alerts} />
+          <OverridePanel />
+          <DeliveryChecklist />
+        </div>
+      </div>
+
       <section className="space-y-4">
         <div className="glass-card flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -241,21 +258,6 @@ const OperationsPortal = () => {
           </div>
         </div>
       </section>
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
-          <SystemOverviewCard state={state} loading={systemLoading} />
-          <ForecastPanel inflow={inflow} prices={price} />
-          <RecommendationPanel
-            schedule={scheduleData ?? schedule}
-            loading={scheduleLoading}
-          />
-        </div>
-        <div className="space-y-6">
-          <AlertsBanner alerts={alerts} />
-          <OverridePanel />
-          <DeliveryChecklist />
-        </div>
-      </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <ProjectContextPanel />
         <ProjectRoadmap />

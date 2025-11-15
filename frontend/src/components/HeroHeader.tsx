@@ -154,22 +154,6 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
           </p>
         </div>
       </div>
-      <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {metricCards.map((metric) => (
-          <div
-            key={metric.label}
-            className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-slate-200"
-          >
-            <p className="text-xs uppercase tracking-widest text-slate-400">
-              {metric.label}
-            </p>
-            <p className="mt-2 text-2xl font-semibold text-white">
-              {metric.value}
-            </p>
-            <p className="text-xs text-slate-400">{metric.sub}</p>
-          </div>
-        ))}
-      </div>
     </section>
   );
 };
