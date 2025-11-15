@@ -19,6 +19,8 @@ from app.models import (
     WeatherPoint,
 )
 
+from app.services.digital_twin import get_digital_twin_current_state
+
 
 class AgentsCoordinator:
     """Facade that will later call MCP agents via the OpenAI Agents SDK.
@@ -32,7 +34,9 @@ class AgentsCoordinator:
 
     async def get_system_state(self) -> SystemState:
         now = datetime.utcnow()
-        self._logger.debug("Generating synthetic system state timestamp=%s", now.isoformat())
+        self._logger.debug(
+            "Generating synthetic system state timestamp=%s", now.isoformat()
+        )
         pumps = [
             PumpStatus(
                 pump_id=f"P{i+1}",
@@ -50,6 +54,12 @@ class AgentsCoordinator:
             electricity_price_eur_mwh=72.5,
             pumps=pumps,
         )
+
+    async def get_digital_twin_current_state(self) -> dict:
+        self._logger.debug("Fetching current digital twin synthetic system state")
+
+        state = await get_digital_twin_current_state(self)
+        return state
 
     async def get_forecasts(self) -> List[ForecastSeries]:
         now = datetime.utcnow()
@@ -70,7 +80,9 @@ class AgentsCoordinator:
 
     async def get_schedule_recommendation(self) -> ScheduleRecommendation:
         now = datetime.utcnow()
-        self._logger.info("Producing schedule recommendation generated_at=%s", now.isoformat())
+        self._logger.info(
+            "Producing schedule recommendation generated_at=%s", now.isoformat()
+        )
         entries = [
             ScheduleEntry(
                 pump_id="P1",
@@ -85,9 +97,7 @@ class AgentsCoordinator:
                 end_time=now + timedelta(hours=2, minutes=30),
             ),
         ]
-        justification = (
-            "Maintain tunnel level near 3.0 m while anticipating higher inflow in 2 hours."
-        )
+        justification = "Maintain tunnel level near 3.0 m while anticipating higher inflow in 2 hours."
         return ScheduleRecommendation(
             generated_at=now,
             horizon_minutes=120,
@@ -95,7 +105,9 @@ class AgentsCoordinator:
             justification=justification,
         )
 
-    async def get_weather_forecast(self, *, lookahead_hours: int, location: str) -> List[WeatherPoint]:
+    async def get_weather_forecast(
+        self, *, lookahead_hours: int, location: str
+    ) -> List[WeatherPoint]:
         settings = get_settings()
         url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
         payload = {"lookahead_hours": lookahead_hours, "location": location}
@@ -122,7 +134,9 @@ class AgentsCoordinator:
                 url,
             )
         except httpx.RequestError as exc:
-            self._logger.warning("Weather agent request failed url=%s error=%s", url, exc)
+            self._logger.warning(
+                "Weather agent request failed url=%s error=%s", url, exc
+            )
         except Exception:
             self._logger.exception("Unexpected error while requesting weather forecast")
 

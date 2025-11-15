@@ -9,7 +9,7 @@ from parse_historical_data import PARQUET_DATA_FILE_PATH
 
 
 SERVER_URI = "http://localhost:4840/wastewater"
-SPEEDUP = int(os.environ.get("MCP_SERVER_PORT", 900))
+SPEEDUP = int(os.environ.get("SPEEDUP", 900))
 
 
 class HistoricalData:

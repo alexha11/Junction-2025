@@ -19,7 +19,8 @@ class PumpStatus(BaseModel):
 
 class SystemState(BaseModel):
     timestamp: datetime
-    tunnel_level_m: float = Field(description="L1")
+    tunnel_level_m: float = Field(description="L2")
+    tunnel_water_volume_m3: float = Field(description="L1")
     inflow_m3_s: float = Field(description="F1")
     outflow_m3_s: float = Field(description="F2")
     electricity_price_eur_mwh: float
