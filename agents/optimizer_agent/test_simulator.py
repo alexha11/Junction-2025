@@ -85,13 +85,27 @@ def format_table(headers: List[str], rows: List[List[str]], width: int = 80) -> 
     sep_row = sep_row.replace("├", "├").replace("┐", "┤")
     lines.append(sep_row)
     
-    # Data rows
+    # Data rows - handle cell wrapping
     for row in rows:
-        data_row = border_vertical
+        # Wrap each cell value to fit column width
+        wrapped_cells = []
+        max_wrapped_lines = 1
         for i, w in enumerate(col_widths):
             cell_value = str(row[i]) if i < len(row) else ""
-            data_row += f" {cell_value:<{w-2}} {border_vertical}"
-        lines.append(data_row)
+            cell_width = w - 2  # Account for padding spaces
+            wrapped = wrap_text(cell_value, cell_width)
+            wrapped_cells.append(wrapped)
+            max_wrapped_lines = max(max_wrapped_lines, len(wrapped))
+        
+        # Create multiple rows if cells wrap
+        for line_idx in range(max_wrapped_lines):
+            data_row = border_vertical
+            for i, w in enumerate(col_widths):
+                wrapped = wrapped_cells[i]
+                # Get the line for this cell, or empty if no more lines
+                cell_line = wrapped[line_idx] if line_idx < len(wrapped) else ""
+                data_row += f" {cell_line:<{w-2}} {border_vertical}"
+            lines.append(data_row)
     
     # Bottom border
     bot_row = corner_bl
@@ -215,25 +229,15 @@ def log_table(logger, headers: List[str], rows: List[List[str]], width: int = 80
     import datetime
     table_lines = format_table(headers, rows, width)
     
-    if include_header:
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        logger.info(f"{timestamp} - {logger.name} - INFO - {table_lines[0]}")
-        # Log remaining lines - either via logger or print for cleaner output
-        for line in table_lines[1:]:
-            if suppress_prefix:
-                print(line)  # Clean output without prefix
-            else:
-                logger.info(f"  {line}")
+    # Log lines based on suppress_prefix setting
+    if suppress_prefix:
+        # All lines clean (no prefix) - use print for all
+        for line in table_lines:
+            print(line)
     else:
-        # No header - log all lines
-        if suppress_prefix:
-            # Use print for all lines when suppressing prefix
-            for line in table_lines:
-                print(line)
-        else:
-            # Log all lines normally
-            for line in table_lines:
-                logger.info(line)
+        # All lines with prefix - use logger for all
+        for line in table_lines:
+            logger.info(line)  # Formatter adds prefix automatically
 
 
 def log_boxed(logger, title: str, lines: List[str], width: int = 80, include_timestamp: bool = False, suppress_prefix: bool = True):
@@ -258,18 +262,15 @@ def log_boxed(logger, title: str, lines: List[str], width: int = 80, include_tim
     
     box_lines = format_boxed_text(title_with_time, lines, width)
     
-    # Log first line with full format (with prefix), rest can be clean
-    for i, line in enumerate(box_lines):
-        if i == 0:
-            # First line always has prefix for context
-            timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"{timestamp_str} - {logger.name} - INFO - {line}")
-        else:
-            # Continuation lines can be clean (without prefix) or with prefix
-            if suppress_prefix:
-                print(line)  # Clean output without prefix
-            else:
-                logger.info(line)  # With prefix
+    # Log lines based on suppress_prefix setting
+    if suppress_prefix:
+        # All lines clean (no prefix) - use print for all
+        for line in box_lines:
+            print(line)
+    else:
+        # All lines with prefix - use logger for all
+        for line in box_lines:
+            logger.info(line)  # Formatter adds prefix automatically
 
 
 @dataclass
@@ -468,10 +469,14 @@ class RollingMPCSimulator:
                             )
                         )
                         if strategic_plan:
-                            logger.info("")
+                            # Blank line before plan table
+                            if self.suppress_prefix:
+                                print()
+                            else:
+                                logger.info("")
                             plan_rows = [
                                 ["Plan Type", strategic_plan.plan_type],
-                                ["Description", strategic_plan.description[:60] + "..." if len(strategic_plan.description) > 60 else strategic_plan.description],
+                                ["Description", strategic_plan.description],  # Let table formatter handle wrapping
                             ]
                             if strategic_plan.forecast_confidence:
                                 plan_rows.append(["Forecast Confidence", strategic_plan.forecast_confidence.upper()])
@@ -483,14 +488,22 @@ class RollingMPCSimulator:
                                 period_rows = []
                                 for start_hour, end_hour, strategy in strategic_plan.time_periods[:4]:  # Show first 4 periods
                                     period_rows.append([f"{start_hour:02d}:00 - {end_hour:02d}:00", strategy])
-                                logger.info("")
+                                # Blank line before time periods table
+                                if self.suppress_prefix:
+                                    print()
+                                else:
+                                    logger.info("")
                                 log_table(logger, ["Time Period", "Strategy"], period_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
                             
                             # Reasoning in box
                             if strategic_plan.reasoning:
                                 reasoning_lines = strategic_plan.reasoning.split('\n')[:3]  # First 3 lines
                                 reasoning_lines = [line[:76] for line in reasoning_lines]  # Truncate long lines
-                                logger.info("")
+                                # Blank line before reasoning box
+                                if self.suppress_prefix:
+                                    print()
+                                else:
+                                    logger.info("")
                                 log_boxed(logger, "STRATEGIC REASONING", reasoning_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                             
                             # Log recalibration loop status
@@ -502,7 +515,11 @@ class RollingMPCSimulator:
                                     ["Confidence", quality_patterns['confidence']],
                                     ["Sample Size", str(quality_patterns['sample_size'])],
                                 ]
-                                logger.info("")
+                                # Blank line before recalibration table
+                                if self.suppress_prefix:
+                                    print()
+                                else:
+                                    logger.info("")
                                 log_table(logger, ["Metric", "Value"], recal_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
                 except Exception as e:
                     logger.warning(f"  Failed to generate strategic plan: {e}")
@@ -512,7 +529,11 @@ class RollingMPCSimulator:
             
             # Log current state in readable format
             step_num = len(simulation.results) + 1
-            logger.info("")
+            # Blank line before step header
+            if self.suppress_prefix:
+                print()
+            else:
+                logger.info("")
             log_boxed(logger, f"OPTIMIZATION STEP {step_num} | {current_time.strftime('%Y-%m-%d %H:%M:%S')}", [], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
             
             # Log system state as table
@@ -535,12 +556,20 @@ class RollingMPCSimulator:
                     active_pumps.append(pump_id)
             
             if pump_rows:
-                logger.info("")
+                # Blank line before pump table
+                if self.suppress_prefix:
+                    print()
+                else:
+                    logger.info("")
                 log_table(logger, ["Pump ID", "Status", "Frequency"], pump_rows, width=80, include_header=True, suppress_prefix=self.suppress_prefix)
                 logger.info(f"  Active pumps: {len(active_pumps)} ({', '.join(active_pumps) if active_pumps else 'None'})")
             
             # Run optimization (with strategic plan if available)
-            logger.info("")
+            # Blank line before optimization box
+            if self.suppress_prefix:
+                print()
+            else:
+                logger.info("")
             opt_info_lines = ["Running optimization..."]
             if strategic_plan:
                 opt_info_lines.append(f"Strategic Plan: {strategic_plan.plan_type}")
@@ -588,7 +617,11 @@ class RollingMPCSimulator:
             # Log optimization result
             if opt_result.success:
                 next_step_schedules = [s for s in opt_result.schedules if s.time_step == 0]
-                logger.info("")
+                # Blank line before schedule table
+                if self.suppress_prefix:
+                    print()
+                else:
+                    logger.info("")
                 schedule_rows = []
                 optimized_pumps = []
                 total_flow = 0.0
@@ -630,7 +663,11 @@ class RollingMPCSimulator:
                     strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
                     strategy = ", ".join(set(strategic_guidance[:4]))
                     
-                    logger.info("")
+                    # Blank line before strategy guidance box
+                    if self.suppress_prefix:
+                        print()
+                    else:
+                        logger.info("")
                     log_boxed(logger, "STRATEGY GUIDANCE", [strategy], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                     
                     # Compute metrics for this step
@@ -666,7 +703,11 @@ class RollingMPCSimulator:
                             strategic_plan=strategic_plan,
                         )
                     )
-                    logger.info("")
+                    # Blank line before LLM explanation box
+                    if self.suppress_prefix:
+                        print()
+                    else:
+                        logger.info("")
                     # Split explanation by newlines, then each line will be word-wrapped automatically
                     if explanation:
                         # Split by newlines first, then each line will be word-wrapped by format_boxed_text
