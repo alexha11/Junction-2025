@@ -32,8 +32,26 @@ class PumpEfficiencyRequest(BaseModel):
 
 
 class SystemStatusAgent(BaseMCPAgent):
+    """
+    System Status Agent - DEPRECATED
+    
+    This agent is deprecated and will be removed in a future version.
+    Please use the digital twin integration via the backend API instead:
+    - GET /system/state - Get current system state from digital twin
+    - GET /system/digital-twin/state - Get raw OPC UA values
+    
+    The digital twin provides real-time data from the OPC UA server,
+    replacing the synthetic data previously returned by this agent.
+    """
+    
     def __init__(self) -> None:
         super().__init__(name="system-status-agent")
+        import warnings
+        warnings.warn(
+            "SystemStatusAgent is deprecated. Use digital twin integration via backend API instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
 
     def configure(self) -> None:
         self.register_tool("get_current_system_state", self.get_current_state)
@@ -41,6 +59,13 @@ class SystemStatusAgent(BaseMCPAgent):
         self.register_tool("get_pump_efficiency", self.get_pump_efficiency)
 
     def get_current_state(self, _: SystemStateRequest) -> SystemStatePayload:
+        """
+        Get current system state - DEPRECATED.
+        
+        This method returns synthetic placeholder data.
+        For production use, call the backend API endpoint /system/state
+        which uses the digital twin for real-time data.
+        """
         now = datetime.utcnow()
         return SystemStatePayload(
             timestamp=now,

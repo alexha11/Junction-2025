@@ -4,6 +4,16 @@
 
 ```mermaid
 graph TB
+    subgraph "External Data Sources"
+        BACKEND[Backend API<br/>FastAPI :8000]
+        DIGITALTWIN[Digital Twin<br/>OPC UA :4840]
+        WEATHER[Weather Agent<br/>HTTP/MCP :8101]
+        PRICE[Price Agent<br/>Future]
+        BACKEND --> DIGITALTWIN
+        BACKEND --> WEATHER
+        BACKEND -.-> PRICE
+    end
+
     subgraph "Data Layer"
         DATA[Historical Data<br/>Hackathon_HSY_data.xlsx]
         LOADER[HSYDataLoader<br/>test_data_loader.py]
@@ -43,9 +53,20 @@ graph TB
     subgraph "Agent Interface"
         AGENT[OptimizationAgent<br/>main.py]
         MCP[BaseMCPAgent<br/>Common Framework]
+        DIVERGENCE[Divergence Detection<br/>L1, Inflow, Price]
+        EMERGENCY[Emergency Response<br/>Adaptive Constraints]
         AGENT --> MCP
         AGENT --> OPT
         AGENT --> EXPLAINER
+        AGENT --> DIVERGENCE
+        AGENT --> EMERGENCY
+    end
+
+    subgraph "State Management"
+        STATETRACK[State Tracking<br/>Previous Predictions]
+        CACHE[Strategic Plan Cache<br/>TTL-based]
+        STATETRACK --> AGENT
+        CACHE --> AGENT
     end
 
     subgraph "Testing & Simulation"
@@ -60,6 +81,9 @@ graph TB
         TEST --> LOADER
     end
 
+    AGENT -->|GET /system/state| BACKEND
+    AGENT -->|GET /weather/forecast| BACKEND
+    AGENT -->|POST /system/schedule| BACKEND
     LOADER --> SIM
     FULL --> AGENT
 ```
@@ -68,58 +92,82 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant User/Test
-    participant Agent/Optimizer
-    participant LLM Explainer
-    participant Featherless API
-    participant MPC Optimizer
-    participant OR-Tools Solver
+    participant User/Backend
+    participant Agent as OptimizationAgent
+    participant Backend as Backend API
+    participant DigitalTwin as Digital Twin
+    participant Weather as Weather Agent
+    participant LLM as LLM Explainer
+    participant Featherless as Featherless API
+    participant Optimizer as MPC Optimizer
+    participant Solver as OR-Tools Solver
 
-    User/Test->>Agent/Optimizer: Request Schedule
-    Agent/Optimizer->>Agent/Optimizer: Get Current State
-    Agent/Optimizer->>Agent/Optimizer: Get 24h Forecasts
+    User/Backend->>Agent: generate_schedule(request)
     
-    alt LLM Available (Strategic Planning)
-        Agent/Optimizer->>LLM Explainer: generate_strategic_plan(24h forecast)
-        LLM Explainer->>Featherless API: API Call (Strategic Planning)
-        Featherless API-->>LLM Explainer: StrategicPlan (Type, Periods, Reasoning)
-        LLM Explainer-->>Agent/Optimizer: StrategicPlan
-        Note over Agent/Optimizer: Strategic Plan influences<br/>optimization weights
-    else LLM Unavailable
-        Agent/Optimizer->>Agent/Optimizer: Use Algorithmic Guidance
+    Note over Agent: Data Gathering Phase
+    Agent->>Backend: GET /system/state
+    Backend->>DigitalTwin: Read OPC UA variables
+    DigitalTwin-->>Backend: System state
+    Backend-->>Agent: CurrentState
+    
+    Agent->>Backend: GET /weather/forecast
+    Backend->>Weather: Get precipitation forecast
+    Weather-->>Backend: Weather forecast
+    Backend-->>Agent: Weather data
+    
+    Agent->>Agent: Get price forecast (fallback or future agent)
+    Agent->>Agent: Estimate inflow (weather-based if needed)
+    
+    Note over Agent: Divergence Detection
+    Agent->>Agent: Detect divergence (L1, inflow, price)
+    alt Divergence Detected
+        Agent->>LLM: generate_emergency_response()
+        LLM->>Featherless: API Call (Emergency)
+        Featherless-->>LLM: Emergency adjustments
+        LLM-->>Agent: Constraint/weight adjustments
     end
     
-    Agent/Optimizer->>Agent/Optimizer: Get 2h Tactical Forecasts
-    Agent/Optimizer->>MPC Optimizer: solve_optimization(strategic_plan)
-    
-    Note over MPC Optimizer: Adjust weights based on<br/>strategic plan strategy
-    
-    alt Full Optimization
-        MPC Optimizer->>OR-Tools Solver: Solve (24h strategic + 2h tactical)
-        OR-Tools Solver-->>MPC Optimizer: Optimization Result
-    else Simplified Fallback
-        MPC Optimizer->>OR-Tools Solver: Solve (simplified constraints)
-        OR-Tools Solver-->>MPC Optimizer: Optimization Result
-    else Rule-Based Fallback
-        MPC Optimizer->>MPC Optimizer: Generate rule-based schedule
-        MPC Optimizer-->>MPC Optimizer: Optimization Result
+    Note over Agent: Strategic Planning
+    alt Strategic Plan Cached & Valid
+        Agent->>Agent: Use cached strategic plan
+    else Need New Strategic Plan
+        alt LLM Available
+            Agent->>LLM: generate_strategic_plan(24h forecast)
+            LLM->>Featherless: API Call (Strategic Planning)
+            Featherless-->>LLM: StrategicPlan
+            LLM-->>Agent: StrategicPlan
+            Agent->>Agent: Cache strategic plan
+        else LLM Unavailable
+            Agent->>Agent: Use Algorithmic Guidance
+        end
     end
     
-    MPC Optimizer-->>Agent/Optimizer: Result (success/failure)
+    Note over Agent: Optimization Phase
+    Agent->>Optimizer: solve_optimization(strategic_plan, emergency_response)
+    Optimizer->>Solver: Solve (24h strategic + 2h tactical)
+    Solver-->>Optimizer: Optimization Result
+    Optimizer-->>Agent: Result (success/failure)
     
-    Agent/Optimizer->>Agent/Optimizer: Compute Metrics
-    Agent/Optimizer->>Agent/Optimizer: Derive Strategic Guidance
+    Note over Agent: Post-Processing
+    Agent->>Agent: Compute Metrics
+    Agent->>Agent: Update state tracking
     
     alt LLM Available (Explanation)
-        Agent/Optimizer->>LLM Explainer: generate_explanation(strategic_plan)
-        LLM Explainer->>Featherless API: API Call (Explanation)
-        Featherless API-->>LLM Explainer: Explanation Text
-        LLM Explainer-->>Agent/Optimizer: Explanation
+        Agent->>LLM: generate_explanation(strategic_plan, metrics)
+        LLM->>Featherless: API Call (Explanation)
+        Featherless-->>LLM: Explanation Text
+        LLM-->>Agent: Explanation
     else LLM Unavailable
-        Agent/Optimizer->>Agent/Optimizer: Fallback Explanation
+        Agent->>Agent: Fallback Explanation
     end
     
-    Agent/Optimizer-->>User/Test: OptimizationResponse
+    Note over Agent: Schedule Writing
+    Agent->>Backend: POST /system/schedule
+    Backend->>DigitalTwin: Write pump frequencies
+    DigitalTwin-->>Backend: Confirmation
+    Backend-->>Agent: Success
+    
+    Agent-->>User/Backend: OptimizationResponse
 ```
 
 ## Rolling MPC Simulation Flow
@@ -207,8 +255,18 @@ graph LR
         AGENT[OptimizationAgent]
         REQUEST[OptimizationRequest]
         RESPONSE[OptimizationResponse]
+        BACKEND_CLIENT[Backend HTTP Client]
         AGENT --> REQUEST
         AGENT --> RESPONSE
+        AGENT --> BACKEND_CLIENT
+    end
+    
+    subgraph "External Services"
+        BACKEND_API[Backend API<br/>:8000]
+        DIGITALTWIN_SVC[Digital Twin<br/>OPC UA :4840]
+        WEATHER_SVC[Weather Agent<br/>:8101]
+        BACKEND_API --> DIGITALTWIN_SVC
+        BACKEND_API --> WEATHER_SVC
     end
 
     subgraph "Testing"
@@ -227,6 +285,10 @@ graph LR
     RESULT --> EXPLAINER
     RESULT --> AGENT
     EXPLAINER --> RESPONSE
+    
+    BACKEND_CLIENT --> BACKEND_API
+    BACKEND_API --> STATE
+    BACKEND_API --> FORECAST
     
     LOADER --> SIM
     OPT --> SIM
@@ -324,17 +386,36 @@ classDiagram
 
 ```
 optimizer_agent/
-├── main.py                    # OptimizationAgent (MCP Agent Interface)
+├── main.py                    # OptimizationAgent (Integrated with Backend)
+│                              # - Backend integration (HTTP client)
+│                              # - Digital twin state reading
+│                              # - Weather agent integration
+│                              # - Divergence detection
+│                              # - Emergency response
+│                              # - State tracking
+│                              # - Schedule writing to digital twin
 ├── optimizer.py               # MPCOptimizer (Core Optimization Engine)
+│                              # - Dual-horizon MPC (24h strategic + 2h tactical)
+│                              # - Pump fairness/rotation
+│                              # - Multiple objectives (cost, smoothness, safety)
+│                              # - Fallback modes (simplified, rule-based)
 ├── explainability.py          # LLMExplainer (Featherless Integration)
+│                              # - Strategic plan generation (24h)
+│                              # - Schedule explanation
+│                              # - Emergency response generation
 │
 ├── test_data_loader.py        # HSYDataLoader (Historical Data Loading)
 ├── test_simulator.py          # RollingMPCSimulator (MPC Simulation)
+│                              # - Divergence detection in simulation
+│                              # - Emergency response testing
 ├── test_metrics.py            # MetricsCalculator (Performance Metrics)
 ├── test_optimizer_with_data.py # Main Test Script
 │
 ├── .env                       # Agent Configuration (API Keys)
-└── PLAN.md                    # Implementation Plan
+├── ARCHITECTURE.md            # This file
+├── ALL_CONSTRAINTS.md          # Complete constraints documentation
+├── CONSTRAINTS_INVENTORY.md    # Constraints inventory
+└── ARCHITECTURE_TREE.txt      # Component tree structure
 ```
 
 ## Optimization Modes
@@ -432,6 +513,49 @@ flowchart TD
     style RETURN fill:#d1ecf1
 ```
 
+## State Tracking & Caching
+
+```mermaid
+graph LR
+    subgraph "State Tracking"
+        PREV_STATE[Previous Prediction<br/>L1, inflow, price]
+        PREV_FORECAST[Previous Forecast<br/>Hash-based validation]
+        TIMESTAMP[Last Update Timestamp]
+        TTL[State TTL<br/>30 minutes]
+    end
+    
+    subgraph "Strategic Plan Cache"
+        CACHED_PLAN[Cached Strategic Plan]
+        PLAN_HASH[Forecast Hash]
+        PLAN_TIMESTAMP[Plan Timestamp]
+        PLAN_TTL[Plan TTL<br/>60 minutes]
+    end
+    
+    subgraph "Cache Logic"
+        CHECK_HASH{Forecast Hash<br/>Changed?}
+        CHECK_TTL{Within TTL?}
+        INVALIDATE[Invalidate Cache]
+        USE_CACHE[Use Cached Plan]
+    end
+    
+    PREV_STATE --> CHECK_HASH
+    PREV_FORECAST --> CHECK_HASH
+    PLAN_HASH --> CHECK_HASH
+    
+    CHECK_HASH -->|No Change| CHECK_TTL
+    CHECK_HASH -->|Changed| INVALIDATE
+    
+    CHECK_TTL -->|Valid| USE_CACHE
+    CHECK_TTL -->|Expired| INVALIDATE
+    
+    INVALIDATE --> LLM[Generate New Plan]
+    USE_CACHE --> OPT[Use Cached Plan]
+    
+    style USE_CACHE fill:#d4edda
+    style INVALIDATE fill:#ffebee
+    style LLM fill:#e1f5ff
+```
+
 ## Constraint Hierarchy
 
 ```mermaid
@@ -461,6 +585,7 @@ graph TD
         O2[Minimize Energy<br/>Total kWh]
         O3[Minimize Violations<br/>L1 Penalty]
         O4[Maximize Efficiency<br/>Specific Energy]
+    O5[Pump Fairness<br/>Rotation/Runtime Balance]
     end
     
     H1 --> OPT[Optimizer]
@@ -470,12 +595,91 @@ graph TD
     
     S1 --> OPT
     S2 --> OPT
-    S3 --> OPT
     
     ST3 --> OPT
     O1 --> OPT
     O2 --> OPT
     O3 --> OPT
     O4 --> OPT
+    O5 --> OPT
+```
+
+## Integration Architecture
+
+```mermaid
+graph TB
+    subgraph "Production Mode (Backend Integration)"
+        BACKEND[Backend API<br/>FastAPI :8000]
+        COORD[AgentsCoordinator]
+        AGENT_PROD[OptimizationAgent<br/>Integrated]
+        COORD --> AGENT_PROD
+        BACKEND --> COORD
+    end
+    
+    subgraph "Standalone Mode (Testing)"
+        AGENT_STAND[OptimizationAgent<br/>Standalone]
+        MCP_DIRECT[Direct MCP Access<br/>Optional]
+        AGENT_STAND -.-> MCP_DIRECT
+    end
+    
+    subgraph "Data Sources"
+        DT[Digital Twin<br/>OPC UA :4840]
+        WA[Weather Agent<br/>:8101]
+        PA[Price Agent<br/>Future]
+        HIST[Historical Data<br/>For Testing]
+    end
+    
+    AGENT_PROD -->|GET /system/state| BACKEND
+    AGENT_PROD -->|GET /weather/forecast| BACKEND
+    AGENT_PROD -->|POST /system/schedule| BACKEND
+    BACKEND --> DT
+    BACKEND --> WA
+    BACKEND -.-> PA
+    
+    AGENT_STAND -->|Direct OPC UA| DT
+    AGENT_STAND -->|HTTP/MCP| WA
+    AGENT_STAND --> HIST
+    
+    style BACKEND fill:#fff4e1
+    style AGENT_PROD fill:#d4edda
+    style AGENT_STAND fill:#fff3cd
+    style DT fill:#e8f5e9
+    style WA fill:#f3e5f5
+```
+
+## Divergence Detection & Emergency Response
+
+```mermaid
+flowchart TD
+    START[Optimization Cycle] --> GETSTATE[Get Current State]
+    GETSTATE --> CHECK{Previous State<br/>Exists?}
+    
+    CHECK -->|No| SKIP[Skip Divergence Check<br/>Store Current State]
+    CHECK -->|Yes| COMPARE[Compare Current vs Previous]
+    
+    COMPARE --> L1_CHECK{L1 Divergence?<br/>|L1_current - L1_predicted| > threshold}
+    COMPARE --> INFLOW_CHECK{Inflow Divergence?<br/>|inflow_current - inflow_forecast| > threshold}
+    COMPARE --> PRICE_CHECK{Price Divergence?<br/>|price_current - price_forecast| > threshold}
+    
+    L1_CHECK -->|Yes| DIVERGENCE[Divergence Detected]
+    INFLOW_CHECK -->|Yes| DIVERGENCE
+    PRICE_CHECK -->|Yes| DIVERGENCE
+    
+    DIVERGENCE --> LLM_CHECK{LLM Available?}
+    LLM_CHECK -->|Yes| EMERGENCY[Generate Emergency Response<br/>via LLM]
+    LLM_CHECK -->|No| ALGO[Algorithmic Emergency Response]
+    
+    EMERGENCY --> ADJUST[Adjust Constraints/Weights]
+    ALGO --> ADJUST
+    
+    ADJUST --> OPTIMIZE[Run Optimization<br/>with Emergency Adjustments]
+    SKIP --> OPTIMIZE
+    
+    OPTIMIZE --> STORE[Store Current Prediction<br/>for Next Cycle]
+    STORE --> END[End]
+    
+    style DIVERGENCE fill:#ffebee
+    style EMERGENCY fill:#fff3cd
+    style ADJUST fill:#e8f5e9
 ```
 

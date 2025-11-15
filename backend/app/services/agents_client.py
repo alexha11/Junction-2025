@@ -9,7 +9,7 @@ import os
 import pickle
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
 import httpx
 import pandas as pd
@@ -27,13 +27,34 @@ from app.models import (
     WeatherPoint,
 )
 
-from app.services.digital_twin import get_digital_twin_current_state
+from app.services.digital_twin import (
+    get_digital_twin_current_state,
+    write_pump_schedule,
+    aggregate_variables_data,
+)
+from app.services.digital_twin_adapter import DigitalTwinAdapter
 
 # Make the local spot-price-forecast sources importable without packaging them.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FORECASTER_SRC = REPO_ROOT / "spot-price-forecast" / "src"
 if str(FORECASTER_SRC) not in sys.path:
     sys.path.append(str(FORECASTER_SRC))
+
+# Import optimizer agent (with fallback if not available)
+AGENTS_SRC = REPO_ROOT / "agents"
+if str(AGENTS_SRC) not in sys.path:
+    sys.path.insert(0, str(AGENTS_SRC))
+
+try:
+    from agents.optimizer_agent.main import OptimizationAgent, OptimizationRequest
+    OPTIMIZER_AVAILABLE = True
+except ImportError as e:
+    OPTIMIZER_AVAILABLE = False
+    OptimizationAgent = None
+    OptimizationRequest = None
+    # Log warning but don't fail - backend can work without optimizer
+    import logging
+    logging.getLogger(__name__).warning(f"Optimizer agent not available: {e}")
 
 from forecaster.models import models
 
@@ -97,9 +118,79 @@ class AgentsCoordinator:
 
     def __init__(self) -> None:
         self._logger = logging.getLogger(self.__class__.__name__)
+        self._settings = get_settings()
+        self._adapter = DigitalTwinAdapter()
+        
+        # Initialize optimizer agent if available
+        self._optimizer_agent: Optional[Any] = None
+        self._latest_optimization_result: Optional[Dict] = None
+        if OPTIMIZER_AVAILABLE and OptimizationAgent:
+            try:
+                # Initialize optimizer agent with backend URL (for digital twin access)
+                # The optimizer will call backend endpoints which use digital twin
+                backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+                self._optimizer_agent = OptimizationAgent(
+                    backend_url=backend_url,
+                    weather_agent_url=self._settings.weather_agent_url,
+                )
+                self._logger.info(
+                    "Optimizer agent initialized successfully backend_url=%s",
+                    backend_url,
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Failed to initialize optimizer agent: {e}",
+                    exc_info=True,
+                )
+                self._optimizer_agent = None
 
     async def get_system_state(self) -> SystemState:
+        """Get current system state from digital twin (or fallback to synthetic)."""
         now = datetime.utcnow()
+        
+        # Try to get state from digital twin if enabled
+        if self._settings.use_digital_twin:
+            try:
+                self._logger.debug(
+                    "Fetching system state from digital twin timestamp=%s", now.isoformat()
+                )
+                opcua_values = await get_digital_twin_current_state(
+                    opcua_url=self._settings.digital_twin_opcua_url
+                )
+                
+                if opcua_values:
+                    # Convert OPC UA values to SystemState
+                    state_dict = self._adapter.convert_opcua_to_system_state(opcua_values)
+                    
+                    # Build SystemState from converted values
+                    pumps = [
+                        PumpStatus(
+                            pump_id=pump_data["pump_id"],
+                            state=PumpState.on if pump_data["state"] == "on" else PumpState.off,
+                            frequency_hz=pump_data["frequency_hz"],
+                            power_kw=pump_data["power_kw"],
+                        )
+                        for pump_data in state_dict.get("pumps", [])
+                    ]
+                    
+                    return SystemState(
+                        timestamp=now,
+                        tunnel_level_m=state_dict.get("tunnel_level_m", 0.0),
+                        tunnel_level_l2_m=state_dict.get("tunnel_level_l2_m", 0.0),
+                        tunnel_water_volume_l1_m3=state_dict.get("tunnel_water_volume_l1_m3", 0.0),
+                        inflow_m3_s=state_dict.get("inflow_m3_s", 0.0),
+                        outflow_m3_s=state_dict.get("outflow_m3_s", 0.0),
+                        electricity_price_eur_mwh=state_dict.get("electricity_price_eur_mwh", 0.0),
+                        pumps=pumps,
+                    )
+                else:
+                    self._logger.warning("Digital twin returned empty values, using fallback")
+            except Exception as e:
+                self._logger.warning(
+                    "Failed to get system state from digital twin, using fallback: %s", e
+                )
+        
+        # Fallback to synthetic data
         self._logger.debug(
             "Generating synthetic system state timestamp=%s", now.isoformat()
         )
@@ -124,10 +215,122 @@ class AgentsCoordinator:
         )
 
     async def get_digital_twin_current_state(self) -> dict:
-        self._logger.debug("Fetching current digital twin synthetic system state")
-
-        state = await get_digital_twin_current_state(self)
-        return state
+        """Get raw OPC UA values from digital twin (deprecated - use get_system_state instead)."""
+        self._logger.warning(
+            "get_digital_twin_current_state is deprecated, use get_system_state instead"
+        )
+        return await get_digital_twin_current_state(
+            opcua_url=self._settings.digital_twin_opcua_url
+        )
+    
+    async def write_optimization_schedule(
+        self, schedule: ScheduleRecommendation
+    ) -> bool:
+        """Write optimization schedule to digital twin.
+        
+        Args:
+            schedule: Schedule recommendation with pump entries
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._settings.use_digital_twin:
+            self._logger.warning("Digital twin is disabled, cannot write schedule")
+            return False
+        
+        try:
+            self._logger.info(
+                "Writing optimization schedule to digital twin entries=%s",
+                len(schedule.entries),
+            )
+            
+            # Convert ScheduleEntry objects to dictionaries
+            schedule_dicts = [
+                {
+                    "pump_id": entry.pump_id,
+                    "target_frequency_hz": entry.target_frequency_hz,
+                }
+                for entry in schedule.entries
+            ]
+            
+            success = await write_pump_schedule(
+                schedule_entries=schedule_dicts,
+                opcua_url=self._settings.digital_twin_opcua_url,
+            )
+            
+            if success:
+                self._logger.info("Successfully wrote schedule to digital twin")
+            else:
+                self._logger.warning("Failed to write schedule to digital twin")
+            
+            return success
+        except Exception as e:
+            self._logger.error("Error writing schedule to digital twin: %s", e)
+            return False
+    
+    async def get_digital_twin_history(
+        self, variable_names: List[str], hours_back: int = 24
+    ) -> List[Dict]:
+        """Get historical data for multiple variables from digital twin MCP server.
+        
+        Args:
+            variable_names: List of OPC UA variable names
+            hours_back: Number of hours to look back
+            
+        Returns:
+            List of aggregation results for each variable
+        """
+        if not self._settings.use_digital_twin:
+            self._logger.warning("Digital twin is disabled, cannot get history")
+            return []
+        
+        try:
+            self._logger.debug(
+                "Getting digital twin history variables=%s hours_back=%s",
+                variable_names,
+                hours_back,
+            )
+            
+            results = await aggregate_variables_data(
+                variable_names=variable_names,
+                hours_back=hours_back,
+                mcp_url=self._settings.digital_twin_mcp_url,
+            )
+            
+            return results
+        except Exception as e:
+            self._logger.error("Error getting digital twin history: %s", e)
+            return []
+    
+    async def get_electricity_forecast(self) -> List[ForecastPoint]:
+        """Get electricity price forecast from electricity agent (placeholder for future implementation).
+        
+        Returns:
+            List of forecast points
+        """
+        # TODO: Implement when electricity agent is available
+        self._logger.debug("Electricity agent not yet implemented, returning empty forecast")
+        return []
+    
+    async def get_weather_forecast_agent(
+        self, *, lookahead_hours: int, location: str
+    ) -> List[WeatherPoint]:
+        """Get weather forecast from weather agent.
+        
+        This method calls the weather agent HTTP endpoint to get precipitation
+        and temperature forecasts. Falls back to sample data if agent unavailable.
+        
+        Args:
+            lookahead_hours: Hours to forecast ahead (1-72)
+            location: Location for forecast (city name or lat,lon)
+            
+        Returns:
+            List of weather points with timestamp, precipitation_mm, temperature_c
+        """
+        # Use the existing get_weather_forecast which already calls the weather agent
+        return await self.get_weather_forecast(
+            lookahead_hours=lookahead_hours, location=location
+        )
 
     async def get_forecasts(self) -> List[ForecastSeries]:
         """Generate a 24-hour forecast from now using LinearModel."""
@@ -214,10 +417,65 @@ class AgentsCoordinator:
             ForecastSeries(metric="price", unit="C/kWh", points=price_predictions),
         ]
 
-    async def get_schedule_recommendation(self) -> ScheduleRecommendation:
+    async def get_schedule_recommendation(
+        self, horizon_minutes: int = 120
+    ) -> ScheduleRecommendation:
+        """Get optimization schedule recommendation from optimizer agent.
+        
+        Args:
+            horizon_minutes: Optimization horizon in minutes (default: 120)
+            
+        Returns:
+            Schedule recommendation with pump schedule entries
+        """
+        # Try to use optimizer agent if available
+        if self._optimizer_agent and OPTIMIZER_AVAILABLE:
+            try:
+                self._logger.info(
+                    "Requesting optimization schedule from optimizer agent horizon_minutes=%s",
+                    horizon_minutes,
+                )
+                
+                # Call optimizer agent
+                request = OptimizationRequest(horizon_minutes=horizon_minutes)
+                response = self._optimizer_agent.generate_schedule(request)
+                
+                # Convert OptimizationResponse to ScheduleRecommendation
+                entries = [
+                    ScheduleEntry(
+                        pump_id=entry.pump_id,
+                        target_frequency_hz=entry.target_frequency_hz,
+                        start_time=entry.start_time,
+                        end_time=entry.end_time,
+                    )
+                    for entry in response.entries
+                ]
+                
+                # Store latest result for dashboard
+                self._latest_optimization_result = {
+                    "generated_at": response.generated_at.isoformat(),
+                    "total_cost_eur": response.total_cost_eur,
+                    "total_energy_kwh": response.total_energy_kwh,
+                    "optimization_mode": response.optimization_mode,
+                    "horizon_minutes": horizon_minutes,
+                }
+                
+                return ScheduleRecommendation(
+                    generated_at=response.generated_at,
+                    horizon_minutes=horizon_minutes,
+                    entries=entries,
+                    justification=response.justification,
+                )
+            except Exception as e:
+                self._logger.warning(
+                    f"Optimizer agent failed, using fallback: {e}",
+                    exc_info=True,
+                )
+        
+        # Fallback to stub data
         now = datetime.utcnow()
         self._logger.info(
-            "Producing schedule recommendation generated_at=%s", now.isoformat()
+            "Producing fallback schedule recommendation generated_at=%s", now.isoformat()
         )
         entries = [
             ScheduleEntry(
@@ -236,46 +494,138 @@ class AgentsCoordinator:
         justification = "Maintain tunnel level near 3.0 m while anticipating higher inflow in 2 hours."
         return ScheduleRecommendation(
             generated_at=now,
-            horizon_minutes=120,
+            horizon_minutes=horizon_minutes,
             entries=entries,
             justification=justification,
         )
+    
+    async def trigger_optimization(
+        self, horizon_minutes: int = 120
+    ) -> Dict[str, Any]:
+        """Trigger optimization and return full result with metrics.
+        
+        Args:
+            horizon_minutes: Optimization horizon in minutes
+            
+        Returns:
+            Dictionary with schedule, metrics, and optimization details
+        """
+        schedule = await self.get_schedule_recommendation(horizon_minutes=horizon_minutes)
+        
+        result = {
+            "schedule": schedule.model_dump(),
+            "metrics": self._latest_optimization_result or {},
+        }
+        
+        return result
+    
+    def get_latest_optimization_metrics(self) -> Optional[Dict[str, Any]]:
+        """Get the latest optimization metrics (cost, energy, mode).
+        
+        Returns:
+            Dictionary with optimization metrics or None if not available
+        """
+        return self._latest_optimization_result
 
     async def get_weather_forecast(
-        self, *, lookahead_hours: int, location: str
+        self, *, lookahead_hours: int, location: str = None
     ) -> List[WeatherPoint]:
+        """Get weather forecast from weather agent (MCP or HTTP) or fallback.
+        
+        Args:
+            lookahead_hours: Hours to forecast ahead (1-72)
+            location: Location for forecast (defaults to config value)
+            
+        Returns:
+            List of weather points
+        """
         settings = get_settings()
-        url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
-        payload = {"lookahead_hours": lookahead_hours, "location": location}
-        self._logger.info(
-            "Requesting weather forecast url=%s lookahead_hours=%s location=%s",
-            url,
-            lookahead_hours,
-            location,
-        )
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, json=payload)
-                response.raise_for_status()
-                data = response.json()
-                self._logger.debug(
-                    "Weather agent responded successfully points=%s",
-                    len(data),
+        
+        # Use configured location if not provided
+        if location is None:
+            location = settings.weather_agent_location
+        
+        # Try weather agent if enabled
+        if settings.use_weather_agent:
+            # Try MCP server first if enabled
+            if settings.use_weather_mcp:
+                try:
+                    mcp_url = f"{settings.weather_agent_mcp_url.rstrip('/')}/tools/get_precipitation_forecast"
+                    payload = {
+                        "lookahead_hours": lookahead_hours,
+                        "location": location,
+                    }
+                    self._logger.info(
+                        "Requesting weather forecast from MCP server url=%s lookahead_hours=%s location=%s",
+                        mcp_url,
+                        lookahead_hours,
+                        location,
+                    )
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        response = await client.post(mcp_url, json=payload)
+                        response.raise_for_status()
+                        data = response.json()
+                        self._logger.debug(
+                            "Weather MCP server responded successfully points=%s",
+                            len(data),
+                        )
+                        # Convert timestamps from ISO strings to datetime objects
+                        weather_points = []
+                        for point in data:
+                            if isinstance(point.get("timestamp"), str):
+                                point["timestamp"] = datetime.fromisoformat(
+                                    point["timestamp"].replace("Z", "+00:00")
+                                )
+                            weather_points.append(WeatherPoint(**point))
+                        return weather_points
+                except httpx.HTTPStatusError as exc:
+                    self._logger.warning(
+                        "Weather MCP server returned error status %s, trying HTTP fallback",
+                        exc.response.status_code,
+                    )
+                except httpx.RequestError as exc:
+                    self._logger.warning(
+                        "Weather MCP server request failed: %s, trying HTTP fallback", exc
+                    )
+                except Exception as e:
+                    self._logger.warning(
+                        "Weather MCP server error: %s, trying HTTP fallback", e
+                    )
+            
+            # Fallback to HTTP endpoint
+            try:
+                url = f"{settings.weather_agent_url.rstrip('/')}/weather/forecast"
+                payload = {"lookahead_hours": lookahead_hours, "location": location}
+                self._logger.info(
+                    "Requesting weather forecast from HTTP endpoint url=%s lookahead_hours=%s location=%s",
+                    url,
+                    lookahead_hours,
+                    location,
                 )
-                return [WeatherPoint(**point) for point in data]
-        except httpx.HTTPStatusError as exc:
-            self._logger.warning(
-                "Weather agent returned error status %s for %s",
-                exc.response.status_code,
-                url,
-            )
-        except httpx.RequestError as exc:
-            self._logger.warning(
-                "Weather agent request failed url=%s error=%s", url, exc
-            )
-        except Exception:
-            self._logger.exception("Unexpected error while requesting weather forecast")
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    self._logger.debug(
+                        "Weather agent HTTP responded successfully points=%s",
+                        len(data),
+                    )
+                    return [WeatherPoint(**point) for point in data]
+            except httpx.HTTPStatusError as exc:
+                self._logger.warning(
+                    "Weather agent returned error status %s for %s, using fallback",
+                    exc.response.status_code,
+                    url,
+                )
+            except httpx.RequestError as exc:
+                self._logger.warning(
+                    "Weather agent request failed url=%s error=%s, using fallback", url, exc
+                )
+            except Exception:
+                self._logger.exception("Unexpected error while requesting weather forecast, using fallback")
 
+        # Fallback to sample data
+        self._logger.debug("Using fallback weather data")
         return self._fallback_weather_series(lookahead_hours)
 
     def _fallback_weather_series(self, hours: int) -> List[WeatherPoint]:

@@ -36,15 +36,6 @@ This guide walks through every file inside `agents/`, explaining how the MCP-sty
 - **Classes**: `InflowRequest`, `WeatherDatum` (reserved for future conditioning), `InflowPoint`, `InflowForecastAgent`.
 - **Tools**: `predict_inflow(InflowRequest)` emits a gentle upward-sloping inflow series. Later this should incorporate weather features (see unused `WeatherDatum`).
 
-## System Status Agent (`agents/status_agent/main.py`)
-
-- **Schemas**: `SystemStatePayload`, `SystemStateRequest`, `TunnelVolumeRequest`, `PumpEfficiencyRequest`.
-- **Tools**:
-  - `get_current_system_state(SystemStateRequest)` returns telemetry snapshot plus pump array placeholders.
-  - `get_tunnel_volume(TunnelVolumeRequest)` estimates volume linearly (TODO: replace with real lookup curve).
-  - `get_pump_efficiency(PumpEfficiencyRequest)` provides a capped efficiency heuristic.
-- **Notes**: This agent is responsible for simulator integration in the PRD. Replace the placeholder calculations with real simulator/SCADA calls and enforce validation via `pydantic` constraints (`Field(gt=0)` already guards tunnel volume inputs).
-
 ## Optimization Agent (`agents/optimizer_agent/main.py`)
 
 - **Schemas**: `OptimizationRequest`, `ScheduleEntry`, `OptimizationResponse`.

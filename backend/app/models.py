@@ -64,6 +64,15 @@ class ScheduleRecommendation(BaseModel):
     justification: str
 
 
+class OptimizationMetrics(BaseModel):
+    """Optimization metrics for dashboard display."""
+    generated_at: str
+    total_cost_eur: float
+    total_energy_kwh: float
+    optimization_mode: str
+    horizon_minutes: int
+
+
 class OverrideRequest(BaseModel):
     schedule_id: str
     operator: str
