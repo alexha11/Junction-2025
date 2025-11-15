@@ -21,6 +21,12 @@ from app.models import (
     WeatherPoint,
 )
 
+import pickle
+import pandas as pd
+from datetime import datetime, timedelta
+from forecaster.models import models
+import os 
+
 WEATHER_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "weather_fallback.json"
 PRICE_SAMPLE_FILE = Path(__file__).resolve().parents[3] / "sample" / "market_price_fallback.json"
 DEFAULT_WEATHER_SAMPLE = [
@@ -101,17 +107,69 @@ class AgentsCoordinator:
         )
 
     async def get_forecasts(self) -> List[ForecastSeries]:
+        """Generate a 24-hour forecast from now using LinearModel."""
         now = datetime.utcnow()
-        horizon = 12
+        horizon = 24
         self._logger.info("Building forecast bundle horizon_hours=%s", horizon)
+
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        MODEL_PATH = os.path.join(BASE_DIR, "../../../spot-price-forecast/models/consumption_forecast_model.pkl")
+        DATA_PATH = os.path.join(BASE_DIR, "../../../spot-price-forecast/data/165.csv")
+
+        with open(MODEL_PATH, "rb") as f:
+            md = pickle.load(f)
+            model = models.LinearModel(
+                daily_price_lags=md["daily_price_lags"],
+                time_features=md["time_features"],
+            )
+            model.coeffs = md["coeffs"]
+      
+
+        df = pd.read_csv(DATA_PATH)
+        df["startTime"] = pd.to_datetime(df["startTime"], utc=True).dt.tz_localize(None)
+        df.set_index("startTime", inplace=True)
+        hist = model.preprocess_data(df)
+        feature_cols = hist.drop(columns="y").columns.tolist()
+        last_row = hist.iloc[-1]
+        max_lag = max(model.daily_price_lags)
+        recent_values = hist['y'].iloc[-max_lag:].tolist()
+       
+
+        forecast_hours = pd.date_range(start=now, periods=horizon, freq="h")
+        price_predictions = []
+
+        for ts in forecast_hours:
+            features = {f'y_lag_avg_{lag}': recent_values[-lag] if len(recent_values) >= lag else recent_values[-1]
+                        for lag in model.daily_price_lags}
+
+            hour = ts.hour
+            is_weekend = ts.weekday() >= 5
+            for col in feature_cols:
+                if col.startswith("weekday_hour_") or col.startswith("weekend_hour_"):
+                    features[col] = 0.0
+            current = f"weekend_hour_{hour}" if is_weekend else f"weekday_hour_{hour}"
+            if current in feature_cols:
+                features[current] = 1.0
+
+            X = pd.DataFrame([[features.get(col, last_row[col] if col in last_row.index and col != 'y' else 0.0)
+                               for col in feature_cols]], columns=feature_cols) if feature_cols else pd.DataFrame([[0]])
+
+            y_hat = abs(model.predict(X).values[0]) if feature_cols else 1.0
+            print(f"Predicted price for {ts.isoformat()}: {y_hat}")
+            price_predictions.append(ForecastPoint(timestamp=ts, value=round(y_hat + 3, 2))) 
+
+            recent_values.append(y_hat)
+            recent_values = recent_values[-max_lag:]
+
         points = [
             ForecastPoint(timestamp=now + timedelta(hours=i), value=2.0 + i * 0.1)
             for i in range(horizon)
         ]
         price_points = self._build_price_forecast_points(now, horizon)
+
         return [
-            ForecastSeries(metric="inflow", unit="m3/s", points=points),
-            ForecastSeries(metric="price", unit="EUR/MWh", points=price_points),
+            ForecastSeries(metric="inflow", unit="m3/s", points=[]),
+            ForecastSeries(metric="price", unit="EUR/MWh", points=price_predictions),
         ]
 
     async def get_schedule_recommendation(self) -> ScheduleRecommendation:
