@@ -1,0 +1,5 @@
+opcua
+pandas
+openpyxl
+cryptography
+pyarrow

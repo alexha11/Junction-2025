@@ -33,10 +33,10 @@ const TopBar: FC<Props> = ({ alertsCount, scheduleGeneratedAt }) => {
     : "Pending";
 
   return (
-    <header className="flex flex-col gap-4 rounded-[28px] border border-white/10 bg-slate-950/80 p-4 shadow-card backdrop-blur">
+    <header className="flex flex-col gap-4 rounded-[28px] border border-white/10 bg-brand-surface/80 p-4 shadow-card backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-accent to-sky-700 text-lg font-semibold text-white">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-hsy to-brand-valmet text-lg font-semibold text-white">
             HSY
           </span>
           <div>

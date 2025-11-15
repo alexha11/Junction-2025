@@ -51,7 +51,7 @@ function ProjectRoadmap() {
         {phases.map((phase) => (
           <div
             key={phase.label}
-            className="rounded-3xl border border-white/10 bg-slate-900/60 px-4 py-4"
+            className="rounded-3xl border border-white/10 bg-brand-surface/60 px-4 py-4"
           >
             <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-widest text-slate-400">
               <span>{phase.label}</span>

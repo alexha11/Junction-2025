@@ -8,11 +8,20 @@ type Schedule = {
   justification?: string;
 };
 
-const RecommendationPanel = ({ schedule }: { schedule?: Schedule }) => (
+interface Props {
+  schedule?: Schedule;
+  loading?: boolean;
+}
+
+const RecommendationPanel = ({ schedule, loading }: Props) => (
   <div className="glass-card">
     <p className="section-title">AI recommendation</p>
     <h2 className="text-2xl font-semibold text-white">Pump plan</h2>
-    {schedule?.entries ? (
+    {loading ? (
+      <div className="mt-6 rounded-2xl border border-white/5 px-4 py-6 text-center text-sm text-slate-400">
+        Loading latest schedule...
+      </div>
+    ) : schedule?.entries ? (
       <ul className="mt-4 space-y-3">
         {schedule.entries.map((entry) => (
           <li
@@ -39,7 +48,7 @@ const RecommendationPanel = ({ schedule }: { schedule?: Schedule }) => (
         No schedule yet. Waiting for latest telemetry.
       </div>
     )}
-    {schedule?.justification && (
+    {schedule?.justification && !loading && (
       <p className="mt-4 rounded-2xl border border-brand-accent/20 bg-brand-accent/5 px-4 py-3 text-sm text-slate-200">
         {schedule.justification}
       </p>

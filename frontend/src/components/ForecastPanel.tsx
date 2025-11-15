@@ -6,6 +6,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { BRAND_COLORS, brandColorWithOpacity } from "../theme/colors";
 
 type Series = {
   metric: string;
@@ -18,7 +19,7 @@ interface Props {
   prices?: Series;
 }
 
-const ForecastPanel = ({ inflow, prices }: Props) => (
+const ForecastPanel = ({ prices }: Props) => (
   <div className="glass-card">
     <div className="flex items-center justify-between">
       <div>
@@ -30,73 +31,35 @@ const ForecastPanel = ({ inflow, prices }: Props) => (
       </span>
     </div>
     <div className="mt-6 space-y-8">
-      <div>
-        <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
-          <span>Inflow ({inflow?.unit ?? "m³/s"})</span>
-          <span className="text-brand-accent">hydrology</span>
-        </div>
-        <div className="h-56">
-          {inflow ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={inflow.points}>
-                <XAxis dataKey="timestamp" hide />
-                <YAxis
-                  domain={[0, "dataMax + 1"]}
-                  width={32}
-                  stroke="#475569"
-                />
-                <Tooltip
-                  labelFormatter={(value) =>
-                    new Date(value).toLocaleTimeString()
-                  }
-                  contentStyle={{
-                    background: "#0f172a",
-                    borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="value"
-                  stroke="#38bdf8"
-                  strokeWidth={3}
-                  dot={false}
-                  strokeLinecap="round"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-slate-400">
-              Loading inflow forecast...
-            </div>
-          )}
-        </div>
-      </div>
+      <div></div>
       <div>
         <div className="mb-3 flex items-center justify-between text-sm text-slate-400">
           <span>Electricity price ({prices?.unit ?? "EUR"})</span>
-          <span className="text-brand-warn">market</span>
+          <span className="text-brand-valmet">market</span>
         </div>
         <div className="h-52">
           {prices ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={prices.points}>
                 <XAxis dataKey="timestamp" hide />
-                <YAxis width={32} stroke="#475569" />
+                <YAxis width={32} stroke={BRAND_COLORS.gridStrong} />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#0f172a",
+                    background: BRAND_COLORS.surfaceAlt,
                     borderRadius: 16,
-                    border: "1px solid rgba(148,163,184,0.3)",
+                    border: `1px solid ${brandColorWithOpacity(
+                      "valmet",
+                      0.25
+                    )}`,
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#f97316"
+                  stroke={BRAND_COLORS.valmet}
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"

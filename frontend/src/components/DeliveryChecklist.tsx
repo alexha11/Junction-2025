@@ -17,8 +17,8 @@ const checklist = [
 ];
 
 const statusColor: Record<string, string> = {
-  Operational: "text-emerald-300",
-  Monitoring: "text-amber-300",
+  Operational: "text-brand-valmet",
+  Monitoring: "text-brand-warn",
   Pending: "text-slate-300",
 };
 

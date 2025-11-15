@@ -10,6 +10,7 @@ interface PumpStatus {
 interface Props {
   state?: {
     tunnel_level_m: number;
+    tunnel_level_l2_m: number;
     inflow_m3_s: number;
     outflow_m3_s: number;
     electricity_price_eur_mwh: number;
@@ -47,18 +48,20 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => (
     ) : (
       <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
         <Stat
-          label="Tunnel level (m)"
-          value={state.tunnel_level_m.toFixed(2)}
+          label="Tunnel level L1/L2 (m)"
+          value={`L1 ${state.tunnel_level_m.toFixed(
+            2
+          )} / L2 ${state.tunnel_level_l2_m.toFixed(2)}`}
         />
-        <Stat label="Inflow (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
-        <Stat label="Outflow (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
+        <Stat label="Inflow F1 (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
+        <Stat label="Outflow F2 (m³/s)" value={state.outflow_m3_s.toFixed(2)} />
         <Stat
-          label="Price (EUR/MWh)"
+          label="Price (C/kWh)"
           value={state.electricity_price_eur_mwh.toFixed(1)}
         />
       </div>
     )}
-    <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5">
+    <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5 scroll-glow">
       <table className="w-full text-sm text-slate-300">
         <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
           <tr>
