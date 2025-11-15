@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .venv312/
 .venv311/
+venv/
 .env.local
 .DS_Store
 node_modules/
