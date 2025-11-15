@@ -46,6 +46,24 @@ npm run dev
 
 The Vite dev server proxies API calls to `http://localhost:8000` so both the backend and frontend must be running.
 
+## Running with Docker
+
+Build the containers and start the entire stack (FastAPI backend, Vite build served via Nginx, Postgres, Redis) with Docker Compose:
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Services:
+
+- Backend API: http://localhost:8000
+- Frontend dashboard: http://localhost:5173
+- Postgres: localhost:5432 (user/password: `postgres` / `postgres`, db: `hsy`)
+- Redis: localhost:6379
+
+Stop everything with `docker compose down` (append `-v` to drop volumes). To see logs for a specific service run `docker compose logs -f backend`.
+
 ## Architectural Highlights
 
 - **MCP-first Agents:** Each agent implements a single MCP tool (e.g., `get_precipitation_forecast`). A thin base class in `agents/common` makes it easy to attach to the OpenAI Agents SDK later.
