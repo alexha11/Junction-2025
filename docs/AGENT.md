@@ -22,6 +22,7 @@ This guide walks through every file inside `agents/`, explaining how the MCP-sty
 - **Classes**: `WeatherRequest`, `WeatherPoint`, `WeatherAgent`, `WeatherProviderError`.
 - **Tools**: `get_precipitation_forecast(WeatherRequest)` calls OpenWeatherMap's `/weather` endpoint, normalizes the current precipitation/temperature snapshot, and replicates it across the requested horizon (up to 72 hours). `location` accepts either a city name or a `lat,lon` string.
 - **Configuration**: Export `OPENWEATHER_API_KEY` (https://home.openweathermap.org/api_keys) or pass `api_key=` when instantiating `WeatherAgent`.
+- **Data Source**: All weather data is fetched from OpenWeather's public APIs; follow the OpenWeather guide (https://openweathermap.org/guide) for available products and request semantics.
 - **Usage**: Run `python -m agents.weather_agent.main` to register tools. The method raises `WeatherProviderError` if the HTTP request fails or returns incomplete data, signaling the backend to retry or fall back.
 
 ## Electricity Price Agent (`agents/price_agent/main.py`)

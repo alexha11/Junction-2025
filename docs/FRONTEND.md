@@ -53,6 +53,7 @@ Each component is presentational and expects data from future hooks or props. Th
 - **Data fetching**: React Query is configured globally. `useWeatherForecast` is the first hook (calls `/api/weather/forecast` by default); mimic this pattern for system state, schedules, etc.
 - **State management**: `zustand` is listed as a dependency but unused. Introduce a store (e.g., `src/state/systemStore.ts`) to share telemetry/pump info between components if React Query caching is insufficient.
 - **Weather agent exposure**: Set `VITE_WEATHER_AGENT_URL` to any reachable endpoint (e.g., FastAPI proxy to the Python agent or a direct OpenWeather URL that already embeds the API key). The React Query hook posts `{lookahead_hours, location}` to that endpoint; extend FastAPI with `/weather/forecast` to satisfy this contract.
+- **Weather data source**: The backend weather agent ultimately fans out to OpenWeather's REST APIs per the official guide (https://openweathermap.org/guide), so align response shapes/units with that documentation when mocking or stubbing data on the frontend.
 
 ## Extending the Frontend
 
