@@ -178,7 +178,7 @@ class MetricsCalculator:
         # Try to generate LLM explanation for the overall simulation if LLM is available
         summary_explanation = None
         if self.llm_explainer:
-            logger.info("LLM: Generating explanation for overall simulation results")
+            logger.debug("LLM: Generating explanation for overall simulation results")
             try:
                 # Create metrics for overall simulation
                 overall_metrics = ScheduleMetrics(
@@ -216,6 +216,7 @@ class MetricsCalculator:
                 
                 # Add LLM explanation to key findings if available
                 if summary_explanation:
+                    logger.debug(f"LLM: Successfully received summary explanation ({len(summary_explanation)} chars)")
                     logger.info(f"LLM Explanation: {summary_explanation}")
                     key_findings.append(f"\nLLM Explanation: {summary_explanation}")
             except Exception as e:

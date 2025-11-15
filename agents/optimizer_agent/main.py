@@ -14,7 +14,10 @@ from agents.common import BaseMCPAgent
 
 logger = logging.getLogger(__name__)
 
-from .explainability import LLMExplainer, ScheduleMetrics
+# Suppress httpx INFO level HTTP request logs (only show WARNING/ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+from .explainability import LLMExplainer, ScheduleMetrics, StrategicPlan, ForecastQualityTracker
 from .optimizer import (
     CurrentState,
     ForecastData,
@@ -70,6 +73,8 @@ class OptimizationAgent(BaseMCPAgent):
             api_key=featherless_api_key or os.getenv("FEATHERLESS_API_KEY"),
             model=os.getenv("LLM_MODEL", "llama-3.1-8b-instruct"),
         )
+        # Initialize forecast quality tracker for recalibration loop
+        self.forecast_quality_tracker = ForecastQualityTracker()
 
     def _init_optimizer(self):
         """Initialize the MPC optimizer with pump specifications."""
@@ -116,32 +121,69 @@ class OptimizationAgent(BaseMCPAgent):
             current_state = self._get_current_state()
             forecast = self._get_forecasts(request.horizon_minutes)
             
-            # Solve optimization
+            # Generate strategic plan (24h) BEFORE optimization (so it can influence optimization)
+            strategic_plan = None
+            try:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Get 24h forecast for strategic planning
+                forecast_24h = self._get_forecasts(1440)  # 24 hours
+                if forecast_24h:
+                    strategic_plan = loop.run_until_complete(
+                        self.explainer.generate_strategic_plan(
+                            forecast_24h_timestamps=forecast_24h.timestamps,
+                            forecast_24h_inflow=forecast_24h.inflow_m3_s,
+                            forecast_24h_price=forecast_24h.price_eur_mwh,
+                            current_l1_m=current_state.l1_m,
+                            l1_min_m=self.optimizer.constraints.l1_min_m,
+                            l1_max_m=self.optimizer.constraints.l1_max_m,
+                            forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
+                        )
+                    )
+                    if strategic_plan:
+                        logger.info(f"LLM Strategic Plan: {strategic_plan.plan_type}")
+                        logger.info(f"  Description: {strategic_plan.description}")
+                        logger.info(f"  Reasoning: {strategic_plan.reasoning[:200]}...")
+            except Exception as e:
+                logger.warning(f"Failed to generate LLM strategic plan: {e}")
+            
+            # Solve optimization (strategic plan can influence weights)
             result = self.optimizer.solve_optimization(
                 current_state=current_state,
                 forecast=forecast,
                 mode=OptimizationMode.FULL,
                 timeout_seconds=30,
+                strategic_plan=strategic_plan,  # Pass strategic plan to optimizer
             )
             
             if not result.success:
-                # Try fallback
+                # Try fallback (also with strategic plan if available)
                 result = self.optimizer.solve_optimization(
                     current_state=current_state,
                     forecast=forecast,
                     mode=OptimizationMode.RULE_BASED,
                     timeout_seconds=10,
+                    strategic_plan=strategic_plan,
                 )
             
             # Convert to response format
             entries = self._convert_to_entries(result, forecast.timestamps)
             
-            # Generate explanation
-            metrics = self._compute_metrics(result, forecast)
+            # Derive algorithmic strategic guidance (always available as fallback)
             strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
             
+            # Generate explanation
+            metrics = self._compute_metrics(result, forecast)
+            
             # Try LLM explanation if available, otherwise use fallback
-            explanation = self._generate_explanation(metrics, strategic_guidance, current_state)
+            explanation = self._generate_explanation(
+                metrics, strategic_guidance, current_state, strategic_plan
+            )
             
             return OptimizationResponse(
                 generated_at=datetime.utcnow(),
@@ -350,6 +392,7 @@ class OptimizationAgent(BaseMCPAgent):
         metrics,
         strategic_guidance: List[str],
         current_state: CurrentState,
+        strategic_plan: Optional[Any] = None,
     ) -> str:
         """Generate explanation using LLM if available, otherwise fallback."""
         # Build current state description
@@ -360,12 +403,17 @@ class OptimizationAgent(BaseMCPAgent):
         )
         
         # Log strategy
-        strategy_summary = ", ".join(set(strategic_guidance[:4]))
-        logger.info(f"Strategy: {strategy_summary}")
+        if strategic_plan:
+            strategy_summary = f"{strategic_plan.plan_type} (LLM-generated)"
+            logger.info(f"Strategy: {strategy_summary}")
+            logger.info(f"  Plan: {strategic_plan.description}")
+        else:
+            strategy_summary = ", ".join(set(strategic_guidance[:4]))
+            logger.info(f"Strategy: {strategy_summary} (algorithmic)")
         
         # Try async LLM call in sync context using asyncio
         if self.explainer.api_base and self.explainer.api_key:
-            logger.info("LLM explainer: Attempting to generate explanation via LLM")
+            logger.debug("LLM explainer: Attempting to generate explanation via LLM")
             try:
                 import asyncio
                 # Try to get existing event loop, or create new one
@@ -381,9 +429,10 @@ class OptimizationAgent(BaseMCPAgent):
                         metrics=metrics,
                         strategic_guidance=strategic_guidance,
                         current_state_description=current_state_desc,
+                        strategic_plan=strategic_plan,
                     )
                 )
-                logger.info(f"LLM explainer: Successfully generated explanation via LLM")
+                logger.debug(f"LLM explainer: Successfully generated explanation via LLM")
                 logger.info(f"LLM Explanation: {explanation}")
                 return explanation
             except Exception as e:

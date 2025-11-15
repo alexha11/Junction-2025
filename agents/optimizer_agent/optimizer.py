@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any, Dict
 
 import numpy as np
 from ortools.linear_solver import pywraplp
@@ -119,6 +120,13 @@ class MPCOptimizer:
         self.strategic_horizon_minutes = strategic_horizon_minutes
         self.tactical_steps = tactical_horizon_minutes // time_step_minutes
         self.strategic_steps = strategic_horizon_minutes // time_step_minutes
+        
+        # Log multi-threading configuration
+        import logging
+        logger = logging.getLogger(__name__)
+        num_threads = os.cpu_count() or 4
+        self.num_threads = num_threads
+        logger.info(f"✓ Optimizer initialized with multi-threading: {num_threads} CPU cores available")
 
     def assess_risk_level(self, current_state: CurrentState, forecast: ForecastData) -> RiskLevel:
         """Assess risk level based on L1 proximity to bounds and expected inflow."""
@@ -127,8 +135,13 @@ class MPCOptimizer:
         l1_range = self.constraints.l1_max_m - self.constraints.l1_min_m
         
         # Distance to bounds (normalized)
-        dist_to_min = (l1 - self.constraints.l1_min_m) / l1_range
-        dist_to_max = (self.constraints.l1_max_m - l1) / l1_range
+        if l1_range > 0.01:  # Avoid division by zero
+            dist_to_min = (l1 - self.constraints.l1_min_m) / l1_range
+            dist_to_max = (self.constraints.l1_max_m - l1) / l1_range
+        else:
+            # If range is too small, treat as at middle
+            dist_to_min = 0.5
+            dist_to_max = 0.5
         
         # Expected inflow in next few steps
         avg_inflow = np.mean(forecast.inflow_m3_s[:4]) if len(forecast.inflow_m3_s) >= 4 else forecast.inflow_m3_s[0]
@@ -179,11 +192,108 @@ class MPCOptimizer:
             },
         }
         return weights[risk_level]
+    
+    def _adjust_weights_for_strategy(
+        self,
+        base_weights: dict,
+        strategic_plan: Any,  # StrategicPlan
+        current_state: CurrentState,
+    ) -> dict:
+        """Adjust optimization weights based on LLM-generated strategic plan.
+        
+        Args:
+            base_weights: Base weights from risk assessment
+            strategic_plan: LLM-generated strategic plan
+            current_state: Current system state
+        
+        Returns:
+            Adjusted weights dict
+        """
+        weights = base_weights.copy()
+        
+        # Get strategy for current hour (0-23)
+        current_hour = current_state.timestamp.hour
+        strategy = self.get_strategy_for_time_period(current_hour, strategic_plan)
+        
+        # Adjust weights based on strategy
+        if strategy == "PUMP_AGGRESSIVE":
+            # Emphasize cost optimization, allow more pumping (only when forecast confidence is high)
+            weights["cost"] *= 1.5  # Prioritize cost
+            if "specific_energy" in weights:
+                weights["specific_energy"] *= 1.2
+            weights["smoothness"] *= 0.8  # Less emphasis on smoothness
+        elif strategy == "PUMP_MINIMAL":
+            # Minimize pumping, prioritize safety
+            weights["cost"] *= 0.8  # Less emphasis on cost
+            if "specific_energy" in weights:
+                weights["specific_energy"] *= 0.7  # Minimize energy use
+            weights["smoothness"] *= 1.2  # Maintain smoothness
+        elif strategy == "PUMP_CONSERVATIVE":
+            # Conservative approach when forecast uncertainty is high
+            weights["cost"] *= 0.5  # Reduce cost optimization significantly
+            if "specific_energy" in weights:
+                weights["specific_energy"] *= 0.6  # Reduce energy optimization
+            weights["safety_margin"] *= 2.0  # Double safety margin weight
+            weights["smoothness"] *= 1.1  # Maintain smoothness for stability
+        elif strategy == "MAINTAIN_BUFFER":
+            # Build buffer before surge/expensive periods
+            weights["cost"] *= 1.0  # Balanced
+            if "specific_energy" in weights:
+                weights["specific_energy"] *= 1.1  # Slight emphasis on energy (pump now)
+            weights["smoothness"] *= 0.9  # Allow variation to build buffer
+        # BALANCED: use base weights unchanged
+        
+        return weights
+    
+    def _adjust_constraints_for_forecast_quality(
+        self, forecast_quality: Dict[str, Any]
+    ) -> Dict[str, float]:
+        """Adjust constraints based on forecast quality to add safety margins.
+        
+        Args:
+            forecast_quality: Dict with 'quality_level' ('good', 'fair', 'poor'),
+                'inflow_mae', 'price_mae', 'l1_mae'
+        
+        Returns:
+            Dict with adjusted 'l1_min_m' and 'l1_max_m'
+        """
+        quality_level = forecast_quality.get('quality_level', 'good')
+        inflow_mae = forecast_quality.get('inflow_mae', 0)
+        
+        # Base constraints
+        adjusted_min = self.constraints.l1_min_m
+        adjusted_max = self.constraints.l1_max_m
+        
+        # Add safety margins based on forecast quality
+        if quality_level == 'poor':
+            # Large errors: significant safety margins
+            # Reduce max by up to 1.5m to protect against surge, increase min by 0.3m for buffer
+            safety_margin_max = min(1.5, inflow_mae / 100 * 5)  # Proportional to error
+            safety_margin_min = 0.3
+            adjusted_max = self.constraints.l1_max_m - safety_margin_max
+            adjusted_min = self.constraints.l1_min_m + safety_margin_min
+        elif quality_level == 'fair':
+            # Medium errors: moderate safety margins
+            safety_margin_max = min(0.8, inflow_mae / 100 * 3)
+            safety_margin_min = 0.2
+            adjusted_max = self.constraints.l1_max_m - safety_margin_max
+            adjusted_min = self.constraints.l1_min_m + safety_margin_min
+        # 'good' quality: use base constraints
+        
+        # Ensure adjusted constraints are still valid
+        adjusted_min = max(self.constraints.l1_min_m * 0.8, adjusted_min)  # Don't go too low
+        adjusted_max = min(self.constraints.l1_max_m * 1.1, adjusted_max)  # Don't go too high
+        adjusted_max = max(adjusted_min + 0.5, adjusted_max)  # Ensure min < max
+        
+        return {
+            'l1_min_m': adjusted_min,
+            'l1_max_m': adjusted_max,
+        }
 
     def derive_strategic_guidance(
         self, forecast_24h: ForecastData
     ) -> List[str]:
-        """Derive strategic guidance from 24h forecast."""
+        """Derive strategic guidance from 24h forecast (algorithmic method)."""
         guidance = []
         avg_price = np.mean(forecast_24h.price_eur_mwh)
         price_std = np.std(forecast_24h.price_eur_mwh)
@@ -199,6 +309,143 @@ class MPCOptimizer:
                 guidance.append("NORMAL")
         
         return guidance
+    
+    def get_strategy_for_time_period(
+        self,
+        hour: int,
+        strategic_plan: Optional[Any] = None,  # StrategicPlan from LLM
+    ) -> str:
+        """Get strategy type for a specific hour based on strategic plan.
+        
+        Args:
+            hour: Hour of the day (0-23)
+            strategic_plan: Optional LLM-generated StrategicPlan
+        
+        Returns:
+            Strategy type: PUMP_AGGRESSIVE, PUMP_MINIMAL, MAINTAIN_BUFFER, or BALANCED
+        """
+        if strategic_plan and hasattr(strategic_plan, 'time_periods'):
+            # Use LLM-generated strategic plan
+            for start_hour, end_hour, strategy in strategic_plan.time_periods:
+                if start_hour <= hour < end_hour:
+                    return strategy
+        
+        # Fallback: default strategy
+        return "BALANCED"
+
+    def detect_divergence(
+        self,
+        current_state: CurrentState,
+        forecast: ForecastData,
+        previous_prediction: Optional[float] = None,
+        previous_forecast_inflow: Optional[float] = None,
+        previous_forecast_price: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Detect if actual values significantly diverge from forecasts.
+        
+        Returns:
+            Dict with 'error_type', 'error_magnitude', 'forecast_value', 'actual_value'
+            or None if no significant divergence
+        """
+        divergence = None
+        
+        # Check L1 divergence
+        if previous_prediction is not None:
+            l1_error = abs(current_state.l1_m - previous_prediction)
+            if l1_error > 0.5:  # More than 0.5m difference
+                divergence = {
+                    'error_type': 'l1_divergence',
+                    'error_magnitude': l1_error,
+                    'forecast_value': previous_prediction,
+                    'actual_value': current_state.l1_m,
+                }
+                return divergence
+        
+        # Check inflow surge (if we have previous forecast)
+        if previous_forecast_inflow is not None and previous_forecast_inflow > 0:
+            inflow_error_pct = abs(current_state.inflow_m3_s - previous_forecast_inflow) / previous_forecast_inflow * 100
+            if current_state.inflow_m3_s > previous_forecast_inflow * 1.3:  # 30% higher
+                divergence = {
+                    'error_type': 'inflow_surge',
+                    'error_magnitude': inflow_error_pct,
+                    'forecast_value': previous_forecast_inflow,
+                    'actual_value': current_state.inflow_m3_s,
+                }
+                return divergence
+        
+        # Check price spike (if we have previous forecast)
+        if previous_forecast_price is not None and previous_forecast_price > 0:
+            price_error_pct = abs(current_state.price_eur_mwh - previous_forecast_price) / previous_forecast_price * 100
+            if current_state.price_eur_mwh > previous_forecast_price * 1.5:  # 50% higher
+                divergence = {
+                    'error_type': 'price_spike',
+                    'error_magnitude': price_error_pct,
+                    'forecast_value': previous_forecast_price,
+                    'actual_value': current_state.price_eur_mwh,
+                }
+                return divergence
+        
+        return None
+    
+    def apply_emergency_response(
+        self,
+        emergency_response: Any,  # EmergencyResponse from LLM
+        current_state: CurrentState,
+    ) -> Dict[str, Any]:
+        """Apply emergency response actions to optimizer configuration.
+        
+        Returns:
+            Dict with adjusted constraints and weights
+        """
+        adjustments = {
+            'constraints': {},
+            'weights': {},
+        }
+        
+        error_type = emergency_response.error_type
+        severity = emergency_response.severity
+        
+        # Apply constraint adjustments based on error type and severity
+        if error_type == 'inflow_surge':
+            # Reduce L1_max to protect against overflow
+            if severity in ('high', 'critical'):
+                adjustments['constraints']['l1_max_m'] = self.constraints.l1_max_m - 1.5
+            else:
+                adjustments['constraints']['l1_max_m'] = self.constraints.l1_max_m - 1.0
+            adjustments['constraints']['l1_min_m'] = self.constraints.l1_min_m + 0.3
+        elif error_type == 'price_spike':
+            # No constraint changes, but weight adjustments
+            pass
+        elif error_type == 'l1_divergence':
+            # Tighten bounds around current L1
+            if current_state.l1_m > (self.constraints.l1_min_m + self.constraints.l1_max_m) / 2:
+                # L1 is high, reduce max
+                adjustments['constraints']['l1_max_m'] = min(
+                    self.constraints.l1_max_m - 0.5,
+                    current_state.l1_m + 1.0
+                )
+            else:
+                # L1 is low, increase min
+                adjustments['constraints']['l1_min_m'] = max(
+                    self.constraints.l1_min_m + 0.3,
+                    current_state.l1_m - 1.0
+                )
+        
+        # Apply weight adjustments for emergency mode
+        if severity in ('high', 'critical'):
+            adjustments['weights'] = {
+                'safety_margin': 2.0,  # Double safety margin weight
+                'cost': 0.3,  # Reduce cost optimization
+                'specific_energy': 0.5,  # Reduce energy optimization
+            }
+        elif severity == 'medium':
+            adjustments['weights'] = {
+                'safety_margin': 1.5,
+                'cost': 0.6,
+                'specific_energy': 0.7,
+            }
+        
+        return adjustments
 
     def solve_optimization(
         self,
@@ -206,37 +453,112 @@ class MPCOptimizer:
         forecast: ForecastData,
         mode: OptimizationMode = OptimizationMode.FULL,
         timeout_seconds: int = 30,
+        strategic_plan: Optional[Any] = None,  # Optional LLM-generated StrategicPlan
+        forecast_quality: Optional[Dict[str, Any]] = None,  # Optional forecast quality metrics
+        emergency_response: Optional[Any] = None,  # Optional EmergencyResponse from LLM
     ) -> OptimizationResult:
-        """Solve the optimization problem using OR-Tools."""
+        """Solve the optimization problem using OR-Tools.
+        
+        Args:
+            current_state: Current system state
+            forecast: Forecast data for tactical horizon (2h)
+            mode: Optimization mode (FULL, SIMPLIFIED, RULE_BASED)
+            timeout_seconds: Solver timeout
+            strategic_plan: Optional LLM-generated 24h strategic plan to influence weights
+            forecast_quality: Optional dict with 'quality_level' ('good', 'fair', 'poor'),
+                'inflow_mae', 'price_mae', 'l1_mae' for forecast quality assessment
+        """
         start_time = time.time()
         
-        # Assess risk and get weights
-        risk_level = self.assess_risk_level(current_state, forecast)
-        weights = self.get_adaptive_weights(risk_level)
+        # Adjust constraints based on forecast quality if provided
+        adjusted_constraints = self.constraints
+        if forecast_quality and forecast_quality.get('quality_level') != 'good':
+            adjusted_constraints = self._adjust_constraints_for_forecast_quality(forecast_quality)
+            # Temporarily store original for restoration
+            original_l1_min = self.constraints.l1_min_m
+            original_l1_max = self.constraints.l1_max_m
+            self.constraints.l1_min_m = adjusted_constraints['l1_min_m']
+            self.constraints.l1_max_m = adjusted_constraints['l1_max_m']
+        else:
+            original_l1_min = None
+            original_l1_max = None
         
-        # Try full optimization first
-        if mode == OptimizationMode.FULL:
-            result = self._solve_full_optimization(
-                current_state, forecast, weights, timeout_seconds
-            )
-            if result.success:
-                return result
+        try:
+            # Apply emergency response adjustments if provided
+            emergency_adjustments = None
+            if emergency_response:
+                emergency_adjustments = self.apply_emergency_response(emergency_response, current_state)
+                # Apply constraint adjustments
+                if 'l1_max_m' in emergency_adjustments['constraints']:
+                    self.constraints.l1_max_m = emergency_adjustments['constraints']['l1_max_m']
+                if 'l1_min_m' in emergency_adjustments['constraints']:
+                    self.constraints.l1_min_m = emergency_adjustments['constraints']['l1_min_m']
+            
+            # Assess risk and get base weights
+            risk_level = self.assess_risk_level(current_state, forecast)
+            weights = self.get_adaptive_weights(risk_level)
+            
+            # Apply emergency weight adjustments if provided
+            if emergency_adjustments and emergency_adjustments.get('weights'):
+                for key, multiplier in emergency_adjustments['weights'].items():
+                    if key in weights:
+                        weights[key] *= multiplier
+            
+            # Adjust weights based on forecast quality if provided
+            if forecast_quality and forecast_quality.get('quality_level') == 'poor':
+                # Low forecast confidence: increase safety margin weight
+                weights['safety_margin'] *= 1.5
+                weights['cost'] *= 0.8  # Less emphasis on cost optimization
+            
+            # Adjust weights based on strategic plan if available
+            if strategic_plan and hasattr(strategic_plan, 'plan_type'):
+                weights = self._adjust_weights_for_strategy(weights, strategic_plan, current_state)
         
-        # Fall back to simplified if full fails
-        if mode in (OptimizationMode.FULL, OptimizationMode.SIMPLIFIED):
-            result = self._solve_simplified_optimization(
-                current_state, forecast, weights, timeout_seconds
-            )
-            if result.success:
-                result.mode = OptimizationMode.SIMPLIFIED
-                return result
-        
-        # Fall back to rule-based safe mode
-        result = self._solve_rule_based(current_state, forecast)
-        result.mode = OptimizationMode.RULE_BASED
-        solve_time = time.time() - start_time
-        result.solve_time_seconds = solve_time
-        return result
+            # Try full optimization first
+            if mode == OptimizationMode.FULL:
+                result = self._solve_full_optimization(
+                    current_state, forecast, weights, timeout_seconds, strategic_plan
+                )
+                if result.success:
+                    solve_time = time.time() - start_time
+                    result.solve_time_seconds = solve_time
+                    # Restore original constraints if adjusted
+                    if original_l1_min is not None:
+                        self.constraints.l1_min_m = original_l1_min
+                        self.constraints.l1_max_m = original_l1_max
+                    return result
+            
+            # Fall back to simplified if full fails
+            if mode in (OptimizationMode.FULL, OptimizationMode.SIMPLIFIED):
+                result = self._solve_simplified_optimization(
+                    current_state, forecast, weights, timeout_seconds
+                )
+                if result.success:
+                    result.mode = OptimizationMode.SIMPLIFIED
+                    solve_time = time.time() - start_time
+                    result.solve_time_seconds = solve_time
+                    # Restore original constraints if adjusted
+                    if original_l1_min is not None:
+                        self.constraints.l1_min_m = original_l1_min
+                        self.constraints.l1_max_m = original_l1_max
+                    return result
+            
+            # Fall back to rule-based safe mode
+            result = self._solve_rule_based(current_state, forecast)
+            result.mode = OptimizationMode.RULE_BASED
+            solve_time = time.time() - start_time
+            result.solve_time_seconds = solve_time
+            # Restore original constraints if adjusted
+            if original_l1_min is not None:
+                self.constraints.l1_min_m = original_l1_min
+                self.constraints.l1_max_m = original_l1_max
+            return result
+        except Exception as e:
+            # Restore original constraints in case of error
+            if original_l1_min is not None:
+                self.constraints.l1_min_m = original_l1_min
+                self.constraints.l1_max_m = original_l1_max
+            raise
 
     def _solve_full_optimization(
         self,
@@ -244,6 +566,7 @@ class MPCOptimizer:
         forecast: ForecastData,
         weights: dict,
         timeout_seconds: int,
+        strategic_plan: Optional[Any] = None,
     ) -> OptimizationResult:
         """Solve full optimization with all constraints."""
         solver = pywraplp.Solver.CreateSolver("SCIP")
@@ -258,6 +581,21 @@ class MPCOptimizer:
                 explanation="Solver creation failed",
                 solve_time_seconds=0.0,
             )
+        
+        # Enable multi-threading for SCIP solver (Option C speedup)
+        # Use all available CPU cores for parallel branch-and-bound search
+        num_threads = getattr(self, 'num_threads', os.cpu_count() or 4)  # Use instance value or default
+        # Set SCIP parallel parameters separately (must use '=' format)
+        try:
+            solver.SetSolverSpecificParametersAsString("parallel/mode = 1")
+            solver.SetSolverSpecificParametersAsString(f"parallel/numsolver = {num_threads}")
+        except Exception as e:
+            # If parallel mode fails, continue without it
+            logger.warning(f"Failed to set SCIP parallel parameters: {e}")
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"SCIP solver: Parallel mode enabled with {num_threads} threads (Option C speedup)")
         
         solver.SetTimeLimit(timeout_seconds * 1000)  # Convert to milliseconds
         
@@ -371,7 +709,11 @@ class MPCOptimizer:
                 # At 50Hz, power = max_power
                 # At 47.8Hz, power ≈ 87% of max
                 # Linear slope = (max - base) / (1 - min_ratio)
-                power_slope = (pump_spec.max_power_kw - base_power) / (1.0 - min_freq_ratio)
+                denominator = 1.0 - min_freq_ratio
+                if abs(denominator) < 0.01:  # Avoid division by zero
+                    power_slope = (pump_spec.max_power_kw - base_power) / 0.5  # Fallback
+                else:
+                    power_slope = (pump_spec.max_power_kw - base_power) / denominator
                 
                 # Power increases with frequency above minimum
                 # Power = base + slope * (freq_ratio - min_freq_ratio) when pump is on

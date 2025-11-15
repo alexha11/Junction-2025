@@ -93,6 +93,9 @@ def main():
     # Log which .env file was loaded (after logging is set up)
     
     # Setup logging
+    # Suppress httpx INFO level HTTP request logs (only show WARNING/ERROR)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -143,6 +146,11 @@ def main():
         "--use-llm",
         action="store_true",
         help="Use LLM for explanations (requires FEATHERLESS_API_BASE and FEATHERLESS_API_KEY env vars)",
+    )
+    parser.add_argument(
+        "--show-log-prefix",
+        action="store_true",
+        help="Show timestamp/module/level prefix on all log lines (default: only first line of tables/boxes)",
     )
     
     args = parser.parse_args()
@@ -231,6 +239,7 @@ def main():
         forecast_method=args.forecast_method,
         llm_explainer=llm_explainer,
         generate_explanations=args.use_llm and (llm_explainer is not None),
+        suppress_prefix=not args.show_log_prefix,  # Suppress prefix unless flag is set
     )
     
     # Run simulation

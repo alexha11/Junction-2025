@@ -14,9 +14,262 @@ import logging
 
 from .optimizer import MPCOptimizer, OptimizationResult, CurrentState, ForecastData, OptimizationMode
 from .test_data_loader import HSYDataLoader
-from .explainability import LLMExplainer, ScheduleMetrics
+from .explainability import LLMExplainer, ScheduleMetrics, StrategicPlan, ForecastQualityTracker
 
 logger = logging.getLogger(__name__)
+
+
+def format_table(headers: List[str], rows: List[List[str]], width: int = 80) -> List[str]:
+    """Format data as a table with borders.
+    
+    Args:
+        headers: List of column headers
+        rows: List of rows, each row is a list of cell values
+        width: Total table width in characters
+    
+    Returns:
+        List of formatted table lines
+    """
+    if not headers:
+        return []
+    
+    # Calculate column widths (ensure headers fit)
+    num_cols = len(headers)
+    col_widths = [len(str(h)) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row[:num_cols]):
+            if i < len(col_widths):
+                col_widths[i] = max(col_widths[i], len(str(cell)))
+    
+    # Add padding (minimum 2 spaces on each side)
+    col_widths = [max(w + 4, 10) for w in col_widths]
+    
+    # Adjust total width to fit columns
+    total_width = sum(col_widths) + num_cols + 1  # +1 for initial border, +num_cols for separators
+    if total_width > width:
+        # Scale down proportionally
+        scale = (width - num_cols - 1) / sum(col_widths)
+        col_widths = [max(int(w * scale), 8) for w in col_widths]
+    
+    lines = []
+    border_char = "─"
+    corner_tl = "┌"
+    corner_tr = "┐"
+    corner_bl = "└"
+    corner_br = "┘"
+    corner_cross = "┼"
+    border_vertical = "│"
+    border_horizontal = border_char * sum(col_widths) + border_char * (num_cols - 1)
+    
+    # Top border
+    top_row = corner_tl
+    for i, w in enumerate(col_widths):
+        top_row += border_char * w
+        if i < len(col_widths) - 1:
+            top_row += corner_cross.replace("┼", "┬")
+    top_row += corner_tr
+    lines.append(top_row)
+    
+    # Header row
+    header_row = border_vertical
+    for i, (header, w) in enumerate(zip(headers, col_widths)):
+        header_row += f" {str(header):<{w-2}} {border_vertical}"
+    lines.append(header_row)
+    
+    # Separator row
+    sep_row = corner_tl.replace("┌", "├")
+    for i, w in enumerate(col_widths):
+        sep_row += border_char * w
+        if i < len(col_widths) - 1:
+            sep_row += corner_cross
+    sep_row = sep_row.replace("├", "├").replace("┐", "┤")
+    lines.append(sep_row)
+    
+    # Data rows
+    for row in rows:
+        data_row = border_vertical
+        for i, w in enumerate(col_widths):
+            cell_value = str(row[i]) if i < len(row) else ""
+            data_row += f" {cell_value:<{w-2}} {border_vertical}"
+        lines.append(data_row)
+    
+    # Bottom border
+    bot_row = corner_bl
+    for i, w in enumerate(col_widths):
+        bot_row += border_char * w
+        if i < len(col_widths) - 1:
+            bot_row += corner_cross.replace("┼", "┴")
+    bot_row += corner_br
+    lines.append(bot_row)
+    
+    return lines
+
+
+def wrap_text(text: str, max_width: int) -> List[str]:
+    """Wrap text at word boundaries, respecting max width.
+    
+    Args:
+        text: Text to wrap
+        max_width: Maximum width per line
+    
+    Returns:
+        List of wrapped lines
+    """
+    if not text:
+        return []
+    
+    words = text.split()
+    if not words:
+        return [text]
+    
+    lines = []
+    current_line = []
+    current_length = 0
+    
+    for word in words:
+        # Add 1 for space between words (except first word)
+        word_length = len(word) + (1 if current_line else 0)
+        
+        if current_length + word_length <= max_width:
+            current_line.append(word)
+            current_length += word_length
+        else:
+            # Start new line
+            if current_line:
+                lines.append(" ".join(current_line))
+            current_line = [word]
+            current_length = len(word)
+            
+            # If single word is too long, truncate it
+            if current_length > max_width:
+                lines.append(word[:max_width])
+                current_line = []
+                current_length = 0
+    
+    # Add remaining line
+    if current_line:
+        lines.append(" ".join(current_line))
+    
+    return lines if lines else [text[:max_width]]
+
+
+def format_boxed_text(title: str, lines: List[str], width: int = 80) -> List[str]:
+    """Format text in a box with borders.
+    
+    Args:
+        title: Box title
+        lines: List of content lines
+        width: Box width in characters
+    
+    Returns:
+        List of formatted box lines
+    """
+    result = []
+    border_char = "─"
+    corner_tl = "┌"
+    corner_tr = "┐"
+    corner_bl = "└"
+    corner_br = "┘"
+    border_vertical = "│"
+    
+    # Content width (accounting for borders and padding)
+    content_width = width - 4  # 2 spaces + 2 border chars
+    
+    # Top border with title
+    title_line = f" {title} "
+    top_border = corner_tl + border_char * (width - 2) + corner_tr
+    if len(title_line) <= width - 4:
+        # Insert title into top border
+        title_start = (width - len(title_line) - 2) // 2
+        top_border = corner_tl + border_char * (title_start - 1) + title_line + border_char * (width - title_start - len(title_line) - 1) + corner_tr
+    result.append(top_border)
+    
+    # Content lines with proper word wrapping
+    if not lines:
+        # Empty box - just add border
+        result.append(f"{border_vertical}{' ' * (width - 2)}{border_vertical}")
+    else:
+        for line in lines:
+            # Wrap long lines at word boundaries
+            wrapped_lines = wrap_text(line, content_width)
+            for wrapped_line in wrapped_lines:
+                result.append(f"{border_vertical} {wrapped_line:<{content_width}} {border_vertical}")
+    
+    # Bottom border
+    result.append(corner_bl + border_char * (width - 2) + corner_br)
+    
+    return result
+
+
+def log_table(logger, headers: List[str], rows: List[List[str]], width: int = 80, include_header: bool = False, suppress_prefix: bool = True):
+    """Log a table using the logger. Header only on first line if include_header=True.
+    
+    Args:
+        logger: Logger instance
+        headers: Table column headers
+        rows: Table data rows
+        width: Table width in characters
+        include_header: Whether to include timestamp/module/level on first line
+        suppress_prefix: If True, use print() for continuation lines (cleaner output)
+    """
+    import datetime
+    table_lines = format_table(headers, rows, width)
+    
+    if include_header:
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logger.info(f"{timestamp} - {logger.name} - INFO - {table_lines[0]}")
+        # Log remaining lines - either via logger or print for cleaner output
+        for line in table_lines[1:]:
+            if suppress_prefix:
+                print(line)  # Clean output without prefix
+            else:
+                logger.info(f"  {line}")
+    else:
+        # No header - log all lines
+        if suppress_prefix:
+            # Use print for all lines when suppressing prefix
+            for line in table_lines:
+                print(line)
+        else:
+            # Log all lines normally
+            for line in table_lines:
+                logger.info(line)
+
+
+def log_boxed(logger, title: str, lines: List[str], width: int = 80, include_timestamp: bool = False, suppress_prefix: bool = True):
+    """Log boxed text using the logger. Timestamp in title if include_timestamp=True.
+    
+    Args:
+        logger: Logger instance
+        title: Box title
+        lines: Content lines
+        width: Box width in characters
+        include_timestamp: Whether to add timestamp to title
+        suppress_prefix: If True, use print() for continuation lines (cleaner output)
+    """
+    import datetime
+    
+    # Add timestamp to title if requested
+    if include_timestamp:
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        title_with_time = f"{title} [{timestamp}]"
+    else:
+        title_with_time = title
+    
+    box_lines = format_boxed_text(title_with_time, lines, width)
+    
+    # Log first line with full format (with prefix), rest can be clean
+    for i, line in enumerate(box_lines):
+        if i == 0:
+            # First line always has prefix for context
+            timestamp_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.info(f"{timestamp_str} - {logger.name} - INFO - {line}")
+        else:
+            # Continuation lines can be clean (without prefix) or with prefix
+            if suppress_prefix:
+                print(line)  # Clean output without prefix
+            else:
+                logger.info(line)  # With prefix
 
 
 @dataclass
@@ -28,6 +281,7 @@ class SimulationResult:
     baseline_schedule: dict
     explanation: Optional[str] = None  # LLM explanation for this step
     strategy: Optional[str] = None  # Strategic guidance for this step
+    strategic_plan: Optional[StrategicPlan] = None  # LLM-generated 24h strategic plan
 
 
 @dataclass
@@ -55,6 +309,7 @@ class RollingMPCSimulator:
         forecast_method: str = 'perfect',
         llm_explainer: Optional[LLMExplainer] = None,
         generate_explanations: bool = True,
+        suppress_prefix: bool = True,
     ):
         """Initialize simulator.
         
@@ -65,6 +320,7 @@ class RollingMPCSimulator:
             forecast_method: 'perfect' or 'persistence' for forecasts
             llm_explainer: Optional LLM explainer for generating explanations per step
             generate_explanations: Whether to generate explanations for each optimization step
+            suppress_prefix: If True, suppress timestamp/module/level prefix on continuation lines (default: True)
         """
         self.data_loader = data_loader
         self.optimizer = optimizer
@@ -72,6 +328,9 @@ class RollingMPCSimulator:
         self.forecast_method = forecast_method
         self.llm_explainer = llm_explainer
         self.generate_explanations = generate_explanations and (llm_explainer is not None)
+        self.suppress_prefix = suppress_prefix
+        # Initialize forecast quality tracker for recalibration loop
+        self.forecast_quality_tracker = ForecastQualityTracker()
 
     def simulate(
         self,
@@ -98,8 +357,16 @@ class RollingMPCSimulator:
         initial_state = self.data_loader.get_state_at_time(start_time)
         if initial_state is None:
             raise ValueError(f"No data available at {start_time}")
-        
+
         simulated_l1 = initial_state.l1_m
+        
+        # Forecast error tracking
+        forecast_errors = {
+            'inflow': [],  # List of (forecast, actual, error_pct) tuples
+            'price': [],
+            'l1': [],  # Predicted vs actual L1
+        }
+        window_size = 10  # Track last N steps for error analysis
         
         while current_time <= end_time:
             # Get current state from historical data (for inflow, price, etc.)
@@ -113,7 +380,59 @@ class RollingMPCSimulator:
             # For testing, we use historical L1 but could simulate it forward
             current_state.l1_m = simulated_l1
             
-            # Get forecast
+            # Track forecast errors from previous step (compare forecast vs actual)
+            if len(simulation.results) > 0:
+                prev_result = simulation.results[-1]
+                if prev_result.optimization_result.success and prev_result.optimization_result.l1_trajectory:
+                    # Get actual values for the previous forecast's first step
+                    prev_time = prev_result.timestamp
+                    prev_forecast = self.data_loader.get_forecast_from_time(
+                        prev_time, 1, method=self.forecast_method  # Just first step
+                    )
+                    if prev_forecast and len(prev_forecast.inflow_m3_s) > 0:
+                        # Compare forecast vs actual
+                        forecast_inflow = prev_forecast.inflow_m3_s[0]
+                        actual_inflow = current_state.inflow_m3_s
+                        forecast_price = prev_forecast.price_eur_mwh[0]
+                        actual_price = current_state.price_eur_mwh
+                        
+                        # Calculate errors
+                        inflow_error_pct = abs(actual_inflow - forecast_inflow) / max(forecast_inflow, 0.1) * 100 if forecast_inflow > 0 else 0
+                        price_error_pct = abs(actual_price - forecast_price) / max(forecast_price, 1.0) * 100 if forecast_price > 0 else 0
+                        
+                        forecast_errors['inflow'].append((forecast_inflow, actual_inflow, inflow_error_pct))
+                        forecast_errors['price'].append((forecast_price, actual_price, price_error_pct))
+                        
+                        # Track L1 prediction error
+                        predicted_l1 = prev_result.optimization_result.l1_trajectory[0] if prev_result.optimization_result.l1_trajectory else simulated_l1
+                        l1_error_m = abs(simulated_l1 - predicted_l1)
+                        forecast_errors['l1'].append((predicted_l1, simulated_l1, l1_error_m))
+                        
+                        # Recalibration Loop: Feed errors back into quality tracker
+                        self.forecast_quality_tracker.add_error(
+                            inflow_error=inflow_error_pct,
+                            price_error=price_error_pct,
+                            l1_error=l1_error_m,
+                            timestamp=current_time
+                        )
+                        
+                        # Keep only last N errors
+                        for key in forecast_errors:
+                            if len(forecast_errors[key]) > window_size:
+                                forecast_errors[key].pop(0)
+                        
+                        # Log significant errors
+                        if inflow_error_pct > 20:
+                            logger.warning(f"⚠ Large inflow forecast error: {inflow_error_pct:.1f}% (forecast={forecast_inflow:.2f}, actual={actual_inflow:.2f} m³/s)")
+                        if price_error_pct > 30:
+                            logger.warning(f"⚠ Large price forecast error: {price_error_pct:.1f}% (forecast={forecast_price:.1f}, actual={actual_price:.1f} EUR/MWh)")
+                        if l1_error_m > 0.5:
+                            logger.warning(f"⚠ Large L1 prediction error: {l1_error_m:.2f}m (predicted={predicted_l1:.2f}, actual={simulated_l1:.2f} m)")
+            
+            # Calculate forecast quality (optimizer will handle safety margins)
+            forecast_quality = self._assess_forecast_quality(forecast_errors)
+            
+            # Get forecast (2h tactical)
             forecast = self.data_loader.get_forecast_from_time(
                 current_time, horizon_steps, method=self.forecast_method
             )
@@ -121,25 +440,186 @@ class RollingMPCSimulator:
                 current_time += timedelta(minutes=self.reoptimize_interval_minutes)
                 continue
             
+            # Get 24h forecast for strategic planning (if LLM available)
+            strategic_plan = None
+            if self.generate_explanations and self.llm_explainer:
+                try:
+                    # Request 24h forecast (96 steps of 15 minutes)
+                    forecast_24h_steps = 24 * 60 // self.optimizer.time_step_minutes  # 96 steps
+                    forecast_24h = self.data_loader.get_forecast_from_time(
+                        current_time, forecast_24h_steps, method=self.forecast_method
+                    )
+                    if forecast_24h:
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        strategic_plan = loop.run_until_complete(
+                            self.llm_explainer.generate_strategic_plan(
+                                forecast_24h_timestamps=forecast_24h.timestamps,
+                                forecast_24h_inflow=forecast_24h.inflow_m3_s,
+                                forecast_24h_price=forecast_24h.price_eur_mwh,
+                                current_l1_m=current_state.l1_m,
+                                l1_min_m=self.optimizer.constraints.l1_min_m,
+                                l1_max_m=self.optimizer.constraints.l1_max_m,
+                                forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
+                            )
+                        )
+                        if strategic_plan:
+                            logger.info("")
+                            plan_rows = [
+                                ["Plan Type", strategic_plan.plan_type],
+                                ["Description", strategic_plan.description[:60] + "..." if len(strategic_plan.description) > 60 else strategic_plan.description],
+                            ]
+                            if strategic_plan.forecast_confidence:
+                                plan_rows.append(["Forecast Confidence", strategic_plan.forecast_confidence.upper()])
+                            
+                            log_table(logger, ["Field", "Value"], plan_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                            
+                            # Time periods table
+                            if strategic_plan.time_periods:
+                                period_rows = []
+                                for start_hour, end_hour, strategy in strategic_plan.time_periods[:4]:  # Show first 4 periods
+                                    period_rows.append([f"{start_hour:02d}:00 - {end_hour:02d}:00", strategy])
+                                logger.info("")
+                                log_table(logger, ["Time Period", "Strategy"], period_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                            
+                            # Reasoning in box
+                            if strategic_plan.reasoning:
+                                reasoning_lines = strategic_plan.reasoning.split('\n')[:3]  # First 3 lines
+                                reasoning_lines = [line[:76] for line in reasoning_lines]  # Truncate long lines
+                                logger.info("")
+                                log_boxed(logger, "STRATEGIC REASONING", reasoning_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+                            
+                            # Log recalibration loop status
+                            quality_patterns = self.forecast_quality_tracker.get_error_patterns()
+                            if quality_patterns['sample_size'] > 0:
+                                recal_rows = [
+                                    ["Quality", quality_patterns['overall_quality']],
+                                    ["Trend", quality_patterns['trend']],
+                                    ["Confidence", quality_patterns['confidence']],
+                                    ["Sample Size", str(quality_patterns['sample_size'])],
+                                ]
+                                logger.info("")
+                                log_table(logger, ["Metric", "Value"], recal_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                except Exception as e:
+                    logger.warning(f"  Failed to generate strategic plan: {e}")
+            
             # Get baseline schedule for comparison
             baseline_schedule = self.data_loader.get_baseline_schedule_at_time(current_time)
             
-            # Run optimization
+            # Log current state in readable format
+            step_num = len(simulation.results) + 1
+            logger.info("")
+            log_boxed(logger, f"OPTIMIZATION STEP {step_num} | {current_time.strftime('%Y-%m-%d %H:%M:%S')}", [], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+            
+            # Log system state as table
+            system_state_rows = [
+                ["Tunnel Level (L1)", f"{current_state.l1_m:.2f} m", f"[{self.optimizer.constraints.l1_min_m:.1f} - {self.optimizer.constraints.l1_max_m:.1f} m]"],
+                ["Inflow (F1)", f"{current_state.inflow_m3_s:.2f} m³/s", ""],
+                ["Outflow (F2)", f"{current_state.outflow_m3_s:.2f} m³/s", ""],
+                ["Electricity Price", f"{current_state.price_eur_mwh:.1f} EUR/MWh", ""],
+            ]
+            log_table(logger, ["Parameter", "Value", "Range/Status"], system_state_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+            
+            # Log pump states as table
+            pump_rows = []
+            active_pumps = []
+            for pump_id, is_on, freq in current_state.pump_states:
+                status = "ON" if is_on else "OFF"
+                freq_str = f"{freq:.1f} Hz" if is_on else "---"
+                pump_rows.append([pump_id, status, freq_str])
+                if is_on:
+                    active_pumps.append(pump_id)
+            
+            if pump_rows:
+                logger.info("")
+                log_table(logger, ["Pump ID", "Status", "Frequency"], pump_rows, width=80, include_header=True, suppress_prefix=self.suppress_prefix)
+                logger.info(f"  Active pumps: {len(active_pumps)} ({', '.join(active_pumps) if active_pumps else 'None'})")
+            
+            # Run optimization (with strategic plan if available)
+            logger.info("")
+            opt_info_lines = ["Running optimization..."]
+            if strategic_plan:
+                opt_info_lines.append(f"Strategic Plan: {strategic_plan.plan_type}")
+            if len(forecast_errors['inflow']) > 0:
+                avg_inflow_error = np.mean([e[2] for e in forecast_errors['inflow'][-5:]])  # Last 5 steps
+                avg_price_error = np.mean([e[2] for e in forecast_errors['price'][-5:]])
+                opt_info_lines.append(f"Forecast Quality: Inflow MAE={avg_inflow_error:.1f}%, Price MAE={avg_price_error:.1f}%")
+                if forecast_quality['quality_level'] != 'good':
+                    opt_info_lines.append(f"Quality Level: {forecast_quality['quality_level'].upper()} - Applying safety margins")
+            log_boxed(logger, "OPTIMIZATION", opt_info_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+            
             try:
                 opt_result = self.optimizer.solve_optimization(
                     current_state=current_state,
                     forecast=forecast,
                     mode=OptimizationMode.FULL,
                     timeout_seconds=30,
+                    strategic_plan=strategic_plan,  # Pass strategic plan to influence optimization
+                    forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
                 )
+                result_rows = [
+                    ["Mode", opt_result.mode.value.upper()],
+                    ["Success", "✓" if opt_result.success else "✗"],
+                    ["Solve Time", f"{opt_result.solve_time_seconds:.2f} s"],
+                ]
+                log_table(logger, ["Status", "Value"], result_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             except Exception as e:
+                logger.warning("")
+                log_boxed(logger, "OPTIMIZATION FAILED", [f"Error: {str(e)}", "Falling back to RULE_BASED mode"], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                 # Fallback on error
                 opt_result = self.optimizer.solve_optimization(
                     current_state=current_state,
                     forecast=forecast,
                     mode=OptimizationMode.RULE_BASED,
                     timeout_seconds=10,
+                    strategic_plan=strategic_plan,  # Pass strategic plan to fallback too
+                    forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
                 )
+                fallback_rows = [
+                    ["Mode", opt_result.mode.value.upper()],
+                    ["Success", "✓" if opt_result.success else "✗"],
+                ]
+                log_table(logger, ["Status", "Value"], fallback_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+            
+            # Log optimization result
+            if opt_result.success:
+                next_step_schedules = [s for s in opt_result.schedules if s.time_step == 0]
+                logger.info("")
+                schedule_rows = []
+                optimized_pumps = []
+                total_flow = 0.0
+                total_power = 0.0
+                for sched in next_step_schedules:
+                    if sched.is_on:
+                        optimized_pumps.append(sched.pump_id)
+                        schedule_rows.append([
+                            sched.pump_id,
+                            f"{sched.frequency_hz:.1f} Hz",
+                            f"{sched.flow_m3_s:.2f} m³/s",
+                            f"{sched.power_kw:.1f} kW"
+                        ])
+                        total_flow += sched.flow_m3_s
+                        total_power += sched.power_kw
+                
+                if schedule_rows:
+                    log_table(logger, ["Pump", "Frequency", "Flow", "Power"], schedule_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                    summary_rows = [
+                        ["Active Pumps", f"{len(optimized_pumps)} ({', '.join(optimized_pumps)})"],
+                        ["Total Outflow", f"{total_flow:.2f} m³/s"],
+                        ["Total Power", f"{total_power:.1f} kW"],
+                    ]
+                    if opt_result.l1_trajectory:
+                        predicted_l1 = opt_result.l1_trajectory[0] if len(opt_result.l1_trajectory) > 0 else current_state.l1_m
+                        summary_rows.append(["Predicted L1 (next)", f"{predicted_l1:.2f} m"])
+                    log_table(logger, ["Metric", "Value"], summary_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+                else:
+                    log_boxed(logger, "OPTIMIZED SCHEDULE", ["No pumps active"], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+            else:
+                log_boxed(logger, "OPTIMIZATION RESULT", ["✗ Optimization failed - using fallback"], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
             
             # Generate explanation for this step if enabled
             explanation = None
@@ -149,19 +629,29 @@ class RollingMPCSimulator:
                     # Get strategic guidance
                     strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
                     strategy = ", ".join(set(strategic_guidance[:4]))
-                    logger.info(f"[Step {len(simulation.results)+1}] Strategy: {strategy}")
+                    
+                    logger.info("")
+                    log_boxed(logger, "STRATEGY GUIDANCE", [strategy], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                     
                     # Compute metrics for this step
                     metrics = self._compute_step_metrics(opt_result, forecast, current_state)
                     
-                    # Build current state description
+                    # Build comprehensive state description for LLM
+                    pump_state_desc = "; ".join([
+                        f"{pid}: {'ON' if on else 'OFF'}" + (f" @ {freq:.1f}Hz" if on else "")
+                        for pid, on, freq in current_state.pump_states
+                    ])
+                    
                     current_state_desc = (
-                        f"Tunnel level: {current_state.l1_m:.2f}m, "
-                        f"Inflow: {current_state.inflow_m3_s:.2f} m³/s, "
-                        f"Price: {current_state.price_eur_mwh:.1f} EUR/MWh"
+                        f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
+                        f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
+                        f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
+                        f"Electricity price={current_state.price_eur_mwh:.1f} EUR/MWh. "
+                        f"Pump states: {pump_state_desc}"
                     )
                     
                     # Generate LLM explanation asynchronously
+                    logger.debug("GENERATING LLM EXPLANATION...")
                     try:
                         loop = asyncio.get_event_loop()
                     except RuntimeError:
@@ -173,11 +663,21 @@ class RollingMPCSimulator:
                             metrics=metrics,
                             strategic_guidance=strategic_guidance,
                             current_state_description=current_state_desc,
+                            strategic_plan=strategic_plan,
                         )
                     )
-                    logger.info(f"[Step {len(simulation.results)+1}] LLM Explanation: {explanation}")
+                    logger.info("")
+                    # Split explanation by newlines, then each line will be word-wrapped automatically
+                    if explanation:
+                        # Split by newlines first, then each line will be word-wrapped by format_boxed_text
+                        explanation_lines = [line.strip() for line in explanation.split('\n') if line.strip()]
+                        if not explanation_lines:
+                            explanation_lines = ["No explanation available"]
+                    else:
+                        explanation_lines = ["No explanation available"]
+                    log_boxed(logger, "LLM EXPLANATION", explanation_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                 except Exception as e:
-                    logger.warning(f"[Step {len(simulation.results)+1}] Failed to generate explanation: {e}")
+                    logger.warning(f"  Failed to generate explanation: {e}")
             
             # Store result
             simulation_result = SimulationResult(
@@ -187,6 +687,7 @@ class RollingMPCSimulator:
                 baseline_schedule=baseline_schedule,
                 explanation=explanation,
                 strategy=strategy,
+                strategic_plan=strategic_plan,
             )
             simulation.results.append(simulation_result)
             
@@ -251,6 +752,86 @@ class RollingMPCSimulator:
             current_time += timedelta(minutes=self.reoptimize_interval_minutes)
         
         return simulation
+    
+    def _assess_forecast_quality(self, forecast_errors: Dict) -> Dict:
+        """Assess forecast quality based on recent errors.
+        
+        Returns:
+            Dict with quality_level ('good', 'fair', 'poor') and metrics
+        """
+        if len(forecast_errors['inflow']) == 0:
+            return {'quality_level': 'good', 'inflow_mae': 0, 'price_mae': 0, 'l1_mae': 0}
+        
+        # Calculate mean absolute errors over recent window
+        recent_inflow_errors = [e[2] for e in forecast_errors['inflow'][-5:]]  # Last 5 steps
+        recent_price_errors = [e[2] for e in forecast_errors['price'][-5:]]
+        recent_l1_errors = [e[2] for e in forecast_errors['l1'][-5:]]
+        
+        inflow_mae = np.mean(recent_inflow_errors) if recent_inflow_errors else 0
+        price_mae = np.mean(recent_price_errors) if recent_price_errors else 0
+        l1_mae = np.mean(recent_l1_errors) if recent_l1_errors else 0
+        
+        # Determine quality level
+        # Good: errors < 10%, Fair: 10-25%, Poor: > 25%
+        max_error = max(inflow_mae, price_mae)
+        if max_error < 10 and l1_mae < 0.3:
+            quality_level = 'good'
+        elif max_error < 25 and l1_mae < 0.5:
+            quality_level = 'fair'
+        else:
+            quality_level = 'poor'
+        
+        return {
+            'quality_level': quality_level,
+            'inflow_mae': inflow_mae,
+            'price_mae': price_mae,
+            'l1_mae': l1_mae,
+        }
+    
+    def _adjust_constraints_for_forecast_quality(
+        self, constraints, forecast_quality: Dict
+    ) -> Dict:
+        """Adjust constraints based on forecast quality to add safety margins.
+        
+        Args:
+            constraints: SystemConstraints instance
+            forecast_quality: Quality assessment dict
+        
+        Returns:
+            Dict with adjusted l1_min_m and l1_max_m
+        """
+        quality_level = forecast_quality['quality_level']
+        inflow_mae = forecast_quality['inflow_mae']
+        
+        # Base constraints
+        adjusted_min = constraints.l1_min_m
+        adjusted_max = constraints.l1_max_m
+        
+        # Add safety margins based on forecast quality
+        if quality_level == 'poor':
+            # Large errors: significant safety margins
+            # Reduce max by up to 1.5m to protect against surge, increase min by 0.3m for buffer
+            safety_margin_max = min(1.5, inflow_mae / 100 * 5)  # Proportional to error
+            safety_margin_min = 0.3
+            adjusted_max = constraints.l1_max_m - safety_margin_max
+            adjusted_min = constraints.l1_min_m + safety_margin_min
+        elif quality_level == 'fair':
+            # Medium errors: moderate safety margins
+            safety_margin_max = min(0.8, inflow_mae / 100 * 3)
+            safety_margin_min = 0.2
+            adjusted_max = constraints.l1_max_m - safety_margin_max
+            adjusted_min = constraints.l1_min_m + safety_margin_min
+        # 'good' quality: use base constraints
+        
+        # Ensure adjusted constraints are still valid
+        adjusted_min = max(constraints.l1_min_m * 0.8, adjusted_min)  # Don't go too low
+        adjusted_max = min(constraints.l1_max_m * 1.1, adjusted_max)  # Don't go too high
+        adjusted_max = max(adjusted_min + 0.5, adjusted_max)  # Ensure min < max
+        
+        return {
+            'l1_min_m': adjusted_min,
+            'l1_max_m': adjusted_max,
+        }
     
     def _compute_step_metrics(
         self,

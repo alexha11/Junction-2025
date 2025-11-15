@@ -32,7 +32,12 @@ graph TB
     subgraph "LLM Integration"
         EXPLAINER[LLMExplainer<br/>explainability.py]
         FEATHERLESS[Featherless API<br/>Llama 3.1 8B Instruct]
-        EXPLAINER --> FEATHERLESS
+        STRATPLAN[Strategic Plan<br/>24h Strategy Generation]
+        EXPLANATION[Explanation<br/>Schedule Interpretation]
+        EXPLAINER --> STRATPLAN
+        EXPLAINER --> EXPLANATION
+        STRATPLAN --> FEATHERLESS
+        EXPLANATION --> FEATHERLESS
     end
 
     subgraph "Agent Interface"
@@ -65,16 +70,29 @@ graph TB
 sequenceDiagram
     participant User/Test
     participant Agent/Optimizer
-    participant MPC Optimizer
-    participant OR-Tools Solver
     participant LLM Explainer
     participant Featherless API
+    participant MPC Optimizer
+    participant OR-Tools Solver
 
     User/Test->>Agent/Optimizer: Request Schedule
     Agent/Optimizer->>Agent/Optimizer: Get Current State
-    Agent/Optimizer->>Agent/Optimizer: Get Forecasts
+    Agent/Optimizer->>Agent/Optimizer: Get 24h Forecasts
     
-    Agent/Optimizer->>MPC Optimizer: solve_optimization()
+    alt LLM Available (Strategic Planning)
+        Agent/Optimizer->>LLM Explainer: generate_strategic_plan(24h forecast)
+        LLM Explainer->>Featherless API: API Call (Strategic Planning)
+        Featherless API-->>LLM Explainer: StrategicPlan (Type, Periods, Reasoning)
+        LLM Explainer-->>Agent/Optimizer: StrategicPlan
+        Note over Agent/Optimizer: Strategic Plan influences<br/>optimization weights
+    else LLM Unavailable
+        Agent/Optimizer->>Agent/Optimizer: Use Algorithmic Guidance
+    end
+    
+    Agent/Optimizer->>Agent/Optimizer: Get 2h Tactical Forecasts
+    Agent/Optimizer->>MPC Optimizer: solve_optimization(strategic_plan)
+    
+    Note over MPC Optimizer: Adjust weights based on<br/>strategic plan strategy
     
     alt Full Optimization
         MPC Optimizer->>OR-Tools Solver: Solve (24h strategic + 2h tactical)
@@ -92,9 +110,9 @@ sequenceDiagram
     Agent/Optimizer->>Agent/Optimizer: Compute Metrics
     Agent/Optimizer->>Agent/Optimizer: Derive Strategic Guidance
     
-    alt LLM Available
-        Agent/Optimizer->>LLM Explainer: generate_explanation()
-        LLM Explainer->>Featherless API: API Call
+    alt LLM Available (Explanation)
+        Agent/Optimizer->>LLM Explainer: generate_explanation(strategic_plan)
+        LLM Explainer->>Featherless API: API Call (Explanation)
         Featherless API-->>LLM Explainer: Explanation Text
         LLM Explainer-->>Agent/Optimizer: Explanation
     else LLM Unavailable
@@ -112,21 +130,28 @@ flowchart TD
     INIT --> LOOP{More Time Steps?}
     
     LOOP -->|Yes| GETSTATE[Get Current State<br/>from Historical Data]
-    GETSTATE --> GETFORECAST[Get Forecast<br/>Perfect/Persistence]
-    GETFORECAST --> OPTIMIZE[Run Optimization<br/>solve_optimization]
+    GETSTATE --> GET24H[Get 24h Forecast<br/>Perfect/Persistence]
+    
+    GET24H --> LLMSTRAT{LLM Enabled?}
+    LLMSTRAT -->|Yes| GENPLAN[Generate Strategic Plan<br/>24h LLM Strategy]
+    LLMSTRAT -->|No| ALGO[Algorithmic Guidance]
+    
+    GENPLAN --> GET2H[Get 2h Tactical Forecast]
+    ALGO --> GET2H
+    
+    GET2H --> OPTIMIZE[Run Optimization<br/>solve_optimization with strategic_plan]
     
     OPTIMIZE --> CHECK{Success?}
     CHECK -->|Yes| RESULT1[Store Result]
     CHECK -->|No| FALLBACK[Try Fallback Mode]
     FALLBACK --> RESULT1
     
-    RESULT1 --> LLM{LLM Enabled?}
-    LLM -->|Yes| GETSTRATEGY[Get Strategic Guidance]
-    GETSTRATEGY --> COMPUTE[Compute Step Metrics]
-    COMPUTE --> CALLAPI[Call LLM API]
-    CALLAPI --> STORE[Store Explanation]
+    RESULT1 --> LLMEXPL{LLM Enabled?}
+    LLMEXPL -->|Yes| COMPUTE[Compute Step Metrics]
+    COMPUTE --> CALLEXPL[Call LLM API<br/>Generate Explanation]
+    CALLEXPL --> STORE[Store Explanation & Strategy]
     
-    LLM -->|No| SKIP[Skip Explanation]
+    LLMEXPL -->|No| SKIP[Skip Explanation]
     STORE --> UPDATE[Update L1 Trajectory]
     SKIP --> UPDATE
     
@@ -197,6 +222,8 @@ graph LR
 
     STATE --> OPT
     FORECAST --> OPT
+    EXPLAINER --> STRATPLAN[StrategicPlan<br/>24h Strategy]
+    STRATPLAN --> OPT
     RESULT --> EXPLAINER
     RESULT --> AGENT
     EXPLAINER --> RESPONSE
@@ -253,6 +280,14 @@ classDiagram
         +float max_violation_m
     }
     
+    class StrategicPlan {
+        +str plan_type
+        +str description
+        +List[tuple] time_periods
+        +str reasoning
+        +Optional[dict] recommended_weights
+    }
+    
     class ScheduleMetrics {
         +float total_energy_kwh
         +float total_cost_eur
@@ -269,6 +304,7 @@ classDiagram
         +CurrentState current_state
         +OptimizationResult optimization_result
         +dict baseline_schedule
+        +Optional[StrategicPlan] strategic_plan
         +str explanation
         +str strategy
     }
@@ -277,8 +313,10 @@ classDiagram
     ForecastData --> OptimizationResult
     PumpSpec --> OptimizationResult
     SystemConstraints --> OptimizationResult
+    StrategicPlan --> OptimizationResult
     OptimizationResult --> ScheduleMetrics
     OptimizationResult --> SimulationResult
+    StrategicPlan --> SimulationResult
     ScheduleMetrics --> SimulationResult
 ```
 
@@ -328,6 +366,40 @@ stateDiagram-v2
     ReturnResponse --> [*]
 ```
 
+## LLM Strategic Plan Flow
+
+```mermaid
+flowchart TD
+    START[Before Optimization] --> GET24H[Get 24h Forecast<br/>Inflow & Price]
+    GET24H --> CHECK{LLM Configured?}
+    
+    CHECK -->|No| ALGO[Use Algorithmic<br/>Strategic Guidance]
+    
+    CHECK -->|Yes| BUILDPLAN[Build Strategic Plan Prompt<br/>24h Forecast + Current L1]
+    BUILDPLAN --> CALLPLAN[Call Featherless API<br/>Strategic Planning]
+    
+    CALLPLAN --> SUCCESS{API Success?}
+    SUCCESS -->|Yes| PARSE[Parse StrategicPlan<br/>Type, Periods, Reasoning]
+    SUCCESS -->|No| ERROR{Error Type?}
+    
+    ERROR -->|Timeout| TIMEOUT[Log Timeout<br/>Use Algorithmic]
+    ERROR -->|HTTP Error| HTTP[Log HTTP Error<br/>Use Algorithmic]
+    ERROR -->|Other| OTHER[Log Error<br/>Use Algorithmic]
+    
+    TIMEOUT --> ALGO
+    HTTP --> ALGO
+    OTHER --> ALGO
+    
+    PARSE --> ADJUST[Adjust Optimization Weights<br/>Based on Strategy]
+    ALGO --> ADJUST
+    ADJUST --> OPTIMIZE[Run Optimization<br/>with Strategic Guidance]
+    
+    style START fill:#e1f5ff
+    style OPTIMIZE fill:#d4edda
+    style ALGO fill:#fff3cd
+    style PARSE fill:#d1ecf1
+```
+
 ## LLM Explanation Flow
 
 ```mermaid
@@ -336,8 +408,8 @@ flowchart TD
     
     CHECK -->|No| FALLBACK[Generate Fallback<br/>Rule-Based Explanation]
     
-    CHECK -->|Yes| BUILD[Build Prompt<br/>with Metrics & Strategy]
-    BUILD --> CALL[Call Featherless API]
+    CHECK -->|Yes| BUILD[Build Prompt<br/>with Metrics, Strategy & StrategicPlan]
+    BUILD --> CALL[Call Featherless API<br/>Explanation Generation]
     
     CALL --> SUCCESS{API Success?}
     SUCCESS -->|Yes| RETURN[Return LLM Explanation]
@@ -377,6 +449,14 @@ graph TD
         S3[Pump Fairness<br/>Balance Operating Hours]
     end
     
+    subgraph "Strategic Guidance"
+        ST1[LLM Strategic Plan<br/>24h Strategy Type]
+        ST2[Time Period Strategies<br/>Per-Hour Guidance]
+        ST3[Weight Adjustment<br/>Cost/Energy/Smoothness]
+        ST1 --> ST2
+        ST2 --> ST3
+    end
+    
     subgraph "Objectives"
         O1[Minimize Cost<br/>Energy × Price]
         O2[Minimize Energy<br/>Total kWh]
@@ -393,6 +473,7 @@ graph TD
     S2 --> OPT
     S3 --> OPT
     
+    ST3 --> OPT
     O1 --> OPT
     O2 --> OPT
     O3 --> OPT
