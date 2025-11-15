@@ -63,6 +63,18 @@ Use `pytest-asyncio` for async route testing.
 - Target: Optimization loop must complete within 2 minutes. Add async tests that instrument the optimization call path and assert runtime thresholds using `pytest.mark.timeout` or custom timers.
 - Regression: Record sample schedule responses in fixtures and compare JSON outputs for stability.
 
+### 2.4 Logging & Curl Diagnostics
+
+- Set `LOG_LEVEL` before starting FastAPI/pytest to surface detailed traces from routers, the `AgentsCoordinator`, and the scheduler (defaults to `INFO`).
+
+  ```bash
+  export LOG_LEVEL=DEBUG
+  uvicorn app.main:app --reload
+  ```
+
+- Use the curated snippets in `backend/DEBUGGING.md` (mirrors `docs/CURL.md`) to hit `/system/state`, `/system/forecasts`, `/system/schedule`, `/weather/forecast`, and `/alerts/`. Pair each `curl` invocation with the STDOUT logs to confirm requests reach the expected code paths and fallback logic kicks in when upstream agents are unavailable.
+- When triaging flaky tests, re-run `pytest -q` with `LOG_LEVEL=DEBUG` to capture scheduler invocations and HTTP client failures inside the test logs.
+
 ## 3. MCP Agent Testing
 
 Each agent currently serves deterministic responses. Testing ensures MCP tool contracts remain stable before integrating the OpenAI Agents SDK.
@@ -145,10 +157,10 @@ npx playwright test
 
 Until full automation exists, run these manual checks before demos:
 
-1. `uvicorn app.main:app --reload` (verify `/system/state` returns JSON).
+1. `LOG_LEVEL=DEBUG uvicorn app.main:app --reload` (verify `/system/state` returns JSON and watch scheduler start/stop logs).
 2. `npm run dev` (dashboard loads, shows stub data).
 3. Manual override form logs reason (check backend log placeholder until persistence added).
-4. Optimization scheduler log prints every 15 minutes.
+4. Optimization scheduler log prints every 15 minutes—cross-check with the `curl` smoke tests in `backend/DEBUGGING.md` to confirm endpoints respond consistently.
 
 ## 7. Future Enhancements
 

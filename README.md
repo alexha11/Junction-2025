@@ -19,6 +19,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+> Tip: set `LOG_LEVEL=DEBUG` before launching uvicorn to surface the new structured logs from routers, the agents coordinator, and the optimization scheduler.
+
 ### 2. Agents (local stubs)
 
 Each agent currently ships with deterministic stub logic so the rest of the stack is runnable without external integrations. Replace `serve()` with the official MCP server hooks once the OpenAI Agents SDK MCP utilities are available.
@@ -74,6 +76,12 @@ Stop everything with `docker compose down` (append `-v` to drop volumes). To see
 - **Coordinator Scheduler:** The FastAPI backend hosts an `OptimizationScheduler` that refreshes recommendations every 15 minutes (configurable). This is where MCP agent calls are orchestrated.
 - **Simulator Adapter:** `backend/app/services/simulator_adapter.py` acts as an integration point for the HSY simulator, ensuring telemetry flows back into the dashboard.
 - **Operator Dashboard:** The React UI consumes `/system/state`, `/system/forecasts`, `/system/schedule`, and `/alerts` endpoints, updating via React Query polling. Components mirror FR1 sections (system overview, forecast, AI recommendation, alerts, manual override form).
+
+## Debugging & Testing
+
+- Use the `backend/DEBUGGING.md` cheat sheet (mirrors `docs/CURL.md`) for ready-made `curl` smoke tests plus logging tips. Running commands like `curl -sS "$BASE_URL/system/forecasts" | jq` while tailing the backend logs makes it easy to verify new deployments.
+- Control verbosity with `LOG_LEVEL` (defaults to `INFO`). Example: `LOG_LEVEL=DEBUG uvicorn app.main:app --reload`.
+- For end-to-end guidance across backend, agents, and frontend test suites, see `docs/TESTING.md`.
 
 ## Next Steps
 
