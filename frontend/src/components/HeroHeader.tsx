@@ -1,4 +1,5 @@
 import type { FC } from "react";
+import { SystemState } from "hooks/system";
 
 interface PumpStatus {
 	pump_id: string;
@@ -21,13 +22,7 @@ interface Schedule {
 }
 
 interface Props {
-	state?: {
-		tunnel_level_m: number;
-		inflow_m3_s: number;
-		outflow_m3_s: number;
-		electricity_price_eur_mwh: number;
-		pumps: PumpStatus[];
-	};
+	state?: SystemState;
 	schedule?: Schedule;
 	alertsCount: number;
 }
@@ -59,24 +54,26 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
 
 	const metricCards = [
 		{
-			label: "Tunnel level",
-			value: state ? `${state.tunnel_level_m.toFixed(2)} m` : "--",
+			label: "Tunnel L2 level",
+			value: state ? `${state.tunnel_level_l2_m.toFixed(2)} m` : "--",
 			sub: "Live telemetry",
 		},
 		{
-			label: "Inflow vs outflow",
+			label: "Inflow vs outflow F1 / F2",
 			value:
 				state && typeof state.inflow_m3_s === "number"
 					? `${state.inflow_m3_s.toFixed(
 							1
-					  )} / ${state.outflow_m3_s.toFixed(1)} m³/s`
+					  )} / ${state.outflow_m3_s.toFixed(2)} m³/s`
 					: "--",
 			sub: "Hydro balance",
 		},
 		{
 			label: "Power price",
 			value: state
-				? `${state.electricity_price_eur_mwh.toFixed(1)} €/MWh`
+				? `${state.electricity_price_eur_cents_kwh.toFixed(
+						2
+				  )} cents (€)/kWh`
 				: "--",
 			sub: "Nord Pool feed",
 		},
