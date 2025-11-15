@@ -1,3 +1,5 @@
+import palette from "./theme/palette.json" assert { type: "json" };
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
@@ -9,14 +11,18 @@ export default {
       },
       colors: {
         brand: {
-          base: "#041914",
-          surface: "#0a2b24",
-          accent: "#00b49d",
-          hsy: "#006b5c",
-          valmet: "#5ab946",
-          "valmet-glow": "#a7e969",
-          warn: "#f6c344",
-          critical: "#f35b5c",
+          base: palette.base,
+          surface: palette.surface,
+          "surface-alt": palette.surfaceAlt,
+          accent: palette.accent,
+          hsy: palette.hsy,
+          valmet: palette.valmet,
+          "valmet-glow": palette.valmetGlow,
+          warn: palette.warn,
+          critical: palette.critical,
+          "grid-strong": palette.gridStrong,
+          "grid-muted": palette.gridMuted,
+          "text-muted": palette.textMuted,
         },
       },
       boxShadow: {

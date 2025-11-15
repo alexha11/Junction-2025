@@ -5,7 +5,7 @@
 @layer base {
   body {
     @apply min-h-screen text-slate-100 antialiased;
-    background-color: #041914;
+    background-color: theme("colors.brand.base");
     background-image: radial-gradient(
         circle at 10% 20%,
         rgba(0, 180, 157, 0.2),

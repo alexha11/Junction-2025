@@ -6,6 +6,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { BRAND_COLORS, brandColorWithOpacity } from "../theme/colors";
 
 type Series = {
   metric: string;
@@ -41,21 +42,24 @@ const ForecastPanel = ({ prices }: Props) => (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={prices.points}>
                 <XAxis dataKey="timestamp" hide />
-                <YAxis width={32} stroke="#1f3d35" />
+                <YAxis width={32} stroke={BRAND_COLORS.gridStrong} />
                 <Tooltip
                   labelFormatter={(value) =>
                     new Date(value).toLocaleTimeString()
                   }
                   contentStyle={{
-                    background: "#031511",
+                    background: BRAND_COLORS.surfaceAlt,
                     borderRadius: 16,
-                    border: "1px solid rgba(90,185,70,0.25)",
+                    border: `1px solid ${brandColorWithOpacity(
+                      "valmet",
+                      0.25
+                    )}`,
                   }}
                 />
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#5ab946"
+                  stroke={BRAND_COLORS.valmet}
                   strokeWidth={3}
                   dot={false}
                   strokeLinecap="round"
