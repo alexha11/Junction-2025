@@ -1,15 +1,12 @@
 import os
 import pandas as pd
-import numpy as np
 import pickle
 from datetime import datetime
 from forecaster.models import models
-from forecaster.models.evaluate import calculate_metrics
 
 
 file_path = '../data/165.csv'
 model_save_path = '../models/consumption_forecast_model.pkl'
-
 
 df = pd.read_csv(file_path)
 
@@ -17,14 +14,11 @@ df['startTime'] = pd.to_datetime(df['startTime'], utc=True)
 df['startTime'] = df['startTime'].dt.tz_localize(None)
 df.set_index('startTime', inplace=True)
 
-
 external_features = {} 
 
 model = models.LinearModel(
     daily_price_lags=[1, 2, 3, 7],
     time_features=True,
-    external_features=external_features,
-    daily_external_lags=[]
 )
 
 data_with_features = model.preprocess_data(df)
