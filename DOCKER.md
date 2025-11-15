@@ -4,12 +4,12 @@ This repository includes first-class Docker support for the FastAPI backend, Vit
 
 ## Key Files
 
-| File | Purpose |
-| --- | --- |
-| `backend/Dockerfile` | Builds the FastAPI backend plus its data assets (sample fallbacks and price-model sources). Creates a dedicated Python 3.12 virtual environment and runs Uvicorn as a non-root user. |
-| `frontend/Dockerfile` | Builds the Vite/React dashboard, parameterized by `VITE_WEATHER_AGENT_URL` so the compiled bundle can point at any backend weather endpoint. |
-| `docker-compose.yml` | Orchestrates backend, frontend, Postgres 16, and Redis 7. Applies health checks, bind mounts the backend source for rapid iteration, and exposes ports 8000/5173/5432/6379. |
-| `.dockerignore` | Keeps the backend image lean by excluding docs, agents, digital-twin tooling, raw datasets, and other non-runtime assets from the build context. |
+| File                  | Purpose                                                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `backend/Dockerfile`  | Builds the FastAPI backend plus its data assets (sample fallbacks and price-model sources). Creates a dedicated Python 3.12 virtual environment and runs Uvicorn as a non-root user. |
+| `frontend/Dockerfile` | Builds the Vite/React dashboard, parameterized by `VITE_WEATHER_AGENT_URL` so the compiled bundle can point at any backend weather endpoint.                                         |
+| `docker-compose.yml`  | Orchestrates backend, frontend, Postgres 16, and Redis 7. Applies health checks, bind mounts the backend source for rapid iteration, and exposes ports 8000/5173/5432/6379.          |
+| `.dockerignore`       | Keeps the backend image lean by excluding docs, agents, digital-twin tooling, raw datasets, and other non-runtime assets from the build context.                                     |
 
 ## Prerequisites
 
@@ -61,19 +61,19 @@ docker compose restart backend
 
 Compose ships with sensible defaults but everything can be overridden through your shell env or a `.env` file in the repo root. Common settings:
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `LOG_LEVEL` | `INFO` | FastAPI + scheduler log verbosity. |
-| `OPTIMIZER_INTERVAL_MINUTES` | `15` | Background optimization cadence. |
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@postgres:5432/hsy` | SQLAlchemy DSN pre-wired to the Compose Postgres service. |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis connection for caching/broker duties. |
-| `WEATHER_AGENT_URL` … `OPTIMIZER_AGENT_URL` | `http://host.docker.internal:81xx` | Base URLs for the MCP agents. Update these if you run the agents inside Compose or on another host. |
-| `VITE_WEATHER_AGENT_URL` (build arg) | `http://backend:8000/weather/forecast` | Compile-time endpoint baked into the frontend bundle. |
-| `BACKEND_PORT` | `8000` | Host port forwarded to the FastAPI container. |
-| `FRONTEND_PORT` | `5173` | Host port for the nginx-served dashboard. |
-| `POSTGRES_PORT` | `5432` | Host port for Postgres; change if the default conflicts. |
-| `REDIS_PORT` | `6379` | Host port for Redis. |
-| `POSTGRES_DB/USER/PASSWORD` | `hsy` / `postgres` / `postgres` | Database bootstrap credentials. |
+| Variable                                    | Default                                                    | Description                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `LOG_LEVEL`                                 | `INFO`                                                     | FastAPI + scheduler log verbosity.                                                                  |
+| `OPTIMIZER_INTERVAL_MINUTES`                | `15`                                                       | Background optimization cadence.                                                                    |
+| `DATABASE_URL`                              | `postgresql+asyncpg://postgres:postgres@postgres:5432/hsy` | SQLAlchemy DSN pre-wired to the Compose Postgres service.                                           |
+| `REDIS_URL`                                 | `redis://redis:6379/0`                                     | Redis connection for caching/broker duties.                                                         |
+| `WEATHER_AGENT_URL` … `OPTIMIZER_AGENT_URL` | `http://host.docker.internal:81xx`                         | Base URLs for the MCP agents. Update these if you run the agents inside Compose or on another host. |
+| `VITE_WEATHER_AGENT_URL` (build arg)        | `http://backend:8000/weather/forecast`                     | Compile-time endpoint baked into the frontend bundle.                                               |
+| `BACKEND_PORT`                              | `8000`                                                     | Host port forwarded to the FastAPI container.                                                       |
+| `FRONTEND_PORT`                             | `5173`                                                     | Host port for the nginx-served dashboard.                                                           |
+| `POSTGRES_PORT`                             | `5432`                                                     | Host port for Postgres; change if the default conflicts.                                            |
+| `REDIS_PORT`                                | `6379`                                                     | Host port for Redis.                                                                                |
+| `POSTGRES_DB/USER/PASSWORD`                 | `hsy` / `postgres` / `postgres`                            | Database bootstrap credentials.                                                                     |
 
 Sample workflow with a `.env` file:
 
@@ -110,12 +110,12 @@ If an agent is unavailable, the backend logs a warning and falls back to determi
 
 ## Troubleshooting
 
-| Symptom | Fix |
-| --- | --- |
-| Backend health check keeps failing | Run `docker compose logs backend` and ensure the scheduler is not throwing import errors. Verify the agent URLs resolve (or set them to `http://backend:8000/...` for stubbed flows). |
-| Postgres container restart loop | Port `5432` may already be in use on the host. Set `POSTGRES_PORT=55432` (and update `DATABASE_URL` if you connect from outside Compose), then re-run `docker compose up`. |
-| File edits not reflected | The backend mount only watches Python modules; restart the container after changing dependencies or compiled assets. For frontend tweaks you must rebuild the image (or run `npm run dev` outside Docker). |
-| Need to inspect DB contents | Use `docker compose exec postgres psql -U postgres -d hsy`. |
+| Symptom                            | Fix                                                                                                                                                                                                        |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend health check keeps failing | Run `docker compose logs backend` and ensure the scheduler is not throwing import errors. Verify the agent URLs resolve (or set them to `http://backend:8000/...` for stubbed flows).                      |
+| Postgres container restart loop    | Port `5432` may already be in use on the host. Set `POSTGRES_PORT=55432` (and update `DATABASE_URL` if you connect from outside Compose), then re-run `docker compose up`.                                 |
+| File edits not reflected           | The backend mount only watches Python modules; restart the container after changing dependencies or compiled assets. For frontend tweaks you must rebuild the image (or run `npm run dev` outside Docker). |
+| Need to inspect DB contents        | Use `docker compose exec postgres psql -U postgres -d hsy`.                                                                                                                                                |
 
 ## Cleanup
 
