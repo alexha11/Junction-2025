@@ -1,0 +1,60 @@
+{
+  "simulation": {
+    "start_time": "2024-11-15T00:00:00",
+    "end_time": "2024-11-18T00:00:00",
+    "num_steps": 289
+  },
+  "metrics": {
+    "total_energy_kwh": {
+      "optimized": 23309.128386497498,
+      "baseline": 27064.731753349304,
+      "savings_kwh": 3755.6033668518066,
+      "savings_percent": 13.876373876814963
+    },
+    "total_cost_eur": {
+      "optimized": 119295.75019743919,
+      "baseline": 140679.10937791158,
+      "savings_eur": 21383.359180472384,
+      "savings_percent": 15.20009564677401
+    },
+    "l1_violations": {
+      "optimized": 0,
+      "baseline": 8,
+      "optimized_max_violation": 0.0,
+      "baseline_max_violation": -0.5156135959550738
+    },
+    "outflow_smoothness": {
+      "optimized_variance": 0.12106238008015363,
+      "baseline_variance": 0.16481055494676483,
+      "improvement_percent": 26.544522516013746
+    },
+    "pump_operating_hours": {
+      "optimized": {
+        "P1": 37.0,
+        "P4": 36.75,
+        "P6": 13.5,
+        "P5": 17.25,
+        "P2": 1.0
+      },
+      "baseline": {
+        "P1": 33.25,
+        "P4": 36.75,
+        "P6": 13.5,
+        "P5": 17.25,
+        "P2": 1.0
+      }
+    },
+    "specific_energy_kwh_m3": {
+      "optimized": 378.56829625146725,
+      "baseline": 457.7961408806446,
+      "improvement_percent": 17.306359218487476
+    }
+  },
+  "key_findings": [
+    "\u2713 Energy reduction: 13.88% (3755.60 kWh saved)",
+    "\u2713 Cost reduction: 15.20% (21383.36 EUR saved)",
+    "\u2713 Constraint violations: Eliminated all violations (8 in baseline)",
+    "\u2713 Outflow smoothness: Improved by 26.54%",
+    "\u2713 Specific energy: Improved by 17.31%"
+  ]
+}

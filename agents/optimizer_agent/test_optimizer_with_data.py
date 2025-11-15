@@ -1,0 +1,309 @@
+"""Main test script for testing optimizer with Hackathon_HSY_data.xlsx."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import os
+from dotenv import load_dotenv
+
+from .test_data_loader import HSYDataLoader
+from .test_simulator import RollingMPCSimulator
+from .test_metrics import MetricsCalculator
+from .optimizer import MPCOptimizer, PumpSpec, SystemConstraints
+from .explainability import LLMExplainer, ScheduleMetrics
+
+
+def create_optimizer_from_data(data_loader: HSYDataLoader) -> MPCOptimizer:
+    """Create optimizer with pump specs extracted from data."""
+    # Get pump specs from historical data
+    pump_specs_data = data_loader.get_pump_specs_from_data()
+    
+    # Create pump specs
+    pumps = []
+    for pump_id in sorted(pump_specs_data.keys()):
+        spec_data = pump_specs_data[pump_id]
+        pumps.append(
+            PumpSpec(
+                pump_id=pump_id,
+                max_flow_m3_s=spec_data['max_flow_m3_s'],
+                max_power_kw=spec_data['max_power_kw'],
+                min_frequency_hz=spec_data.get('min_frequency_hz', 47.8),
+                max_frequency_hz=spec_data.get('max_frequency_hz', 50.0),
+                preferred_freq_min_hz=47.8,
+                preferred_freq_max_hz=49.0,
+            )
+        )
+    
+    # Create constraints (adjust based on actual data if needed)
+    constraints = SystemConstraints(
+        l1_min_m=0.5,
+        l1_max_m=8.0,
+        tunnel_volume_m3=50000.0,  # Approximate - could be calculated from data
+        min_pumps_on=1,
+        min_pump_on_duration_minutes=120,
+        min_pump_off_duration_minutes=120,
+        flush_frequency_days=1,
+        flush_target_level_m=0.5,
+    )
+    
+    optimizer = MPCOptimizer(
+        pumps=pumps,
+        constraints=constraints,
+        time_step_minutes=15,
+        tactical_horizon_minutes=120,
+        strategic_horizon_minutes=1440,
+    )
+    
+    return optimizer
+
+
+def main():
+    """Main test function."""
+    # Load environment variables from .env file
+    # Priority: agent's own .env, then backend/.env, then project root, then current dir
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent.parent
+    env_files = [
+        script_dir / ".env",  # Agent's own .env (highest priority)
+        project_root / "backend" / ".env",  # Backend directory
+        project_root / ".env",  # Project root
+        Path(".env"),  # Current directory
+    ]
+    
+    env_loaded = False
+    loaded_from = None
+    for env_file in env_files:
+        if env_file.exists():
+            load_dotenv(env_file, override=False)  # Don't override existing env vars
+            env_loaded = True
+            loaded_from = env_file
+            break
+    
+    if not env_loaded:
+        # Try loading from current directory as fallback (load_dotenv searches automatically)
+        result = load_dotenv(override=False)
+        if result:
+            env_loaded = True
+            loaded_from = "auto-detected"
+    
+    # Log which .env file was loaded (after logging is set up)
+    
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    parser = argparse.ArgumentParser(
+        description="Test optimizer with Hackathon_HSY_data.xlsx"
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        default="INFO",
+        help="Logging level (default: INFO)",
+    )
+    parser.add_argument(
+        "--data-file",
+        type=str,
+        default="Hackathon_HSY_data.xlsx",
+        help="Path to Excel data file",
+    )
+    parser.add_argument(
+        "--start-days",
+        type=int,
+        default=0,
+        help="Days from start of data to begin simulation (default: 0)",
+    )
+    parser.add_argument(
+        "--simulation-days",
+        type=int,
+        default=7,
+        help="Number of days to simulate (default: 7)",
+    )
+    parser.add_argument(
+        "--forecast-method",
+        type=str,
+        choices=["perfect", "persistence"],
+        default="perfect",
+        help="Forecast method: 'perfect' uses historical data, 'persistence' uses last value (default: perfect)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        help="Optional output file path for saving results (JSON/CSV)",
+    )
+    parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="Use LLM for explanations (requires FEATHERLESS_API_BASE and FEATHERLESS_API_KEY env vars)",
+    )
+    
+    args = parser.parse_args()
+    
+    # Set logging level
+    logging.getLogger().setLevel(getattr(logging, args.log_level))
+    logger = logging.getLogger(__name__)
+    
+    # Log .env loading status
+    if env_loaded:
+        logger.info(f"✓ Loaded .env file from: {loaded_from}")
+    else:
+        logger.warning("⚠ No .env file found in any checked location")
+    
+    # Load data
+    data_file_path = Path(__file__).parent / args.data_file
+    if not data_file_path.exists():
+        print(f"Error: Data file not found: {data_file_path}")
+        return 1
+    
+    print(f"Loading data from: {data_file_path}")
+    data_loader = HSYDataLoader(str(data_file_path))
+    
+    # Get data range
+    data_start, data_end = data_loader.get_data_range()
+    print(f"Data range: {data_start} to {data_end}")
+    
+    # Calculate simulation window
+    simulation_start = data_start + timedelta(days=args.start_days)
+    simulation_end = simulation_start + timedelta(days=args.simulation_days)
+    
+    # Clamp to available data
+    if simulation_end > data_end:
+        simulation_end = data_end
+        simulation_start = simulation_end - timedelta(days=args.simulation_days)
+    
+    print(f"Simulation window: {simulation_start} to {simulation_end}")
+    print(f"Forecast method: {args.forecast_method}")
+    print()
+    
+    # Create optimizer
+    print("Initializing optimizer with pump specifications from data...")
+    optimizer = create_optimizer_from_data(data_loader)
+    print(f"  Configured {len(optimizer.pumps)} pumps")
+    print()
+    
+    # Initialize LLM explainer early if requested (so it can be used during simulation)
+    llm_explainer = None
+    if args.use_llm:
+        api_base = os.getenv("FEATHERLESS_API_BASE")
+        api_key = os.getenv("FEATHERLESS_API_KEY")
+        
+        # Log what we found (without exposing the key)
+        logger.info(f"Environment check: FEATHERLESS_API_BASE={'set' if api_base else 'not set'}")
+        logger.info(f"Environment check: FEATHERLESS_API_KEY={'set' if api_key else 'not set'}")
+        
+        if api_base and api_key:
+            llm_explainer = LLMExplainer(
+                api_base=api_base,
+                api_key=api_key,
+                model=os.getenv("LLM_MODEL", "llama-3.1-8b-instruct"),
+            )
+            logger.info("✓ LLM explainer enabled for per-step explanations")
+            logger.info(f"  API Base: {api_base}")
+            logger.info(f"  Model: {llm_explainer.model}")
+            print("✓ LLM explainer enabled (will generate explanation for each optimization step)")
+        else:
+            missing = []
+            if not api_base:
+                missing.append("FEATHERLESS_API_BASE")
+            if not api_key:
+                missing.append("FEATHERLESS_API_KEY")
+            logger.warning(f"⚠ LLM requested but {', '.join(missing)} not set")
+            logger.info("Checked .env locations: current directory, project root, backend/, script directory")
+            if env_loaded:
+                logger.info(f"Note: .env file was loaded from {loaded_from}, but it may not contain these variables")
+            print(f"⚠ LLM requested but {', '.join(missing)} not set. Explanations will be skipped.")
+    else:
+        logger.info("LLM explainer: Not requested (use --use-llm flag to enable per-step explanations)")
+    
+    # Create simulator
+    simulator = RollingMPCSimulator(
+        data_loader=data_loader,
+        optimizer=optimizer,
+        reoptimize_interval_minutes=15,
+        forecast_method=args.forecast_method,
+        llm_explainer=llm_explainer,
+        generate_explanations=args.use_llm and (llm_explainer is not None),
+    )
+    
+    # Run simulation
+    print("Running rolling MPC simulation...")
+    print("This may take several minutes depending on data size and optimizer settings.")
+    print()
+    
+    try:
+        simulation = simulator.simulate(
+            start_time=simulation_start,
+            end_time=simulation_end,
+            horizon_minutes=120,  # 2-hour tactical horizon
+        )
+        
+        print(f"Simulation completed: {len(simulation.results)} optimization steps")
+        if args.use_llm and llm_explainer:
+            explanations_generated = sum(1 for r in simulation.results if r.explanation is not None)
+            print(f"  Generated {explanations_generated} LLM explanations (one per optimization step)")
+        print()
+        
+        # Compare with baseline
+        print("Calculating metrics and comparing with baseline...")
+        comparison_metrics = simulator.compare_with_baseline(simulation)
+        
+        # Generate report (LLM explainer is already initialized above)
+        metrics_calculator = MetricsCalculator(simulator, llm_explainer=llm_explainer)
+        
+        if args.use_llm and llm_explainer:
+            logger.info("Generating additional LLM explanation for overall simulation summary...")
+            print("Generating overall simulation summary explanation (this may take a moment)...")
+        
+        report = metrics_calculator.generate_comparison_report(
+            simulation, comparison_metrics
+        )
+        
+        # Print report
+        print()
+        print(report.summary)
+        print()
+        print("KEY FINDINGS:")
+        for finding in report.key_findings:
+            print(f"  {finding}")
+        print()
+        
+        # Save results if requested
+        if args.output:
+            output_path = Path(args.output)
+            if output_path.suffix.lower() == '.json':
+                import json
+                output_data = {
+                    'simulation': {
+                        'start_time': simulation.start_time.isoformat(),
+                        'end_time': simulation.end_time.isoformat(),
+                        'num_steps': len(simulation.results),
+                    },
+                    'metrics': report.metrics,
+                    'key_findings': report.key_findings,
+                }
+                with open(output_path, 'w') as f:
+                    json.dump(output_data, f, indent=2)
+                print(f"Results saved to: {output_path}")
+            else:
+                print(f"Warning: Unsupported output format: {output_path.suffix}")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"Error during simulation: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    exit(main())
+

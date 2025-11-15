@@ -1,15 +1,32 @@
+"""Optimizer Agent - MPC-style pump scheduling optimizer."""
+
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
+import httpx
 from pydantic import BaseModel
 
 from agents.common import BaseMCPAgent
 
+logger = logging.getLogger(__name__)
+
+from .explainability import LLMExplainer, ScheduleMetrics
+from .optimizer import (
+    CurrentState,
+    ForecastData,
+    MPCOptimizer,
+    OptimizationMode,
+    PumpSpec,
+    SystemConstraints,
+)
+
 
 class OptimizationRequest(BaseModel):
-    horizon_minutes: int
+    horizon_minutes: int = 120  # Default 2h tactical horizon
 
 
 class ScheduleEntry(BaseModel):
@@ -23,40 +40,393 @@ class OptimizationResponse(BaseModel):
     generated_at: datetime
     entries: List[ScheduleEntry]
     justification: str
+    total_cost_eur: float = 0.0
+    total_energy_kwh: float = 0.0
+    optimization_mode: str = "full"
 
 
 class OptimizationAgent(BaseMCPAgent):
-    def __init__(self) -> None:
+    """Optimizer Agent implementing MPC-style optimization."""
+
+    def __init__(
+        self,
+        status_agent_url: Optional[str] = None,
+        price_agent_url: Optional[str] = None,
+        inflow_agent_url: Optional[str] = None,
+        featherless_api_base: Optional[str] = None,
+        featherless_api_key: Optional[str] = None,
+    ):
         super().__init__(name="optimization-agent")
+        self.status_agent_url = status_agent_url or os.getenv("STATUS_AGENT_URL", "http://localhost:8103")
+        self.price_agent_url = price_agent_url or os.getenv("PRICE_AGENT_URL", "http://localhost:8102")
+        self.inflow_agent_url = inflow_agent_url or os.getenv("INFLOW_AGENT_URL", "http://localhost:8104")
+        
+        # Initialize optimizer
+        self._init_optimizer()
+        
+        # Initialize LLM explainer
+        self.explainer = LLMExplainer(
+            api_base=featherless_api_base or os.getenv("FEATHERLESS_API_BASE"),
+            api_key=featherless_api_key or os.getenv("FEATHERLESS_API_KEY"),
+            model=os.getenv("LLM_MODEL", "llama-3.1-8b-instruct"),
+        )
+
+    def _init_optimizer(self):
+        """Initialize the MPC optimizer with pump specifications."""
+        # Default pump specifications (8 pumps as per PRD)
+        pumps = [
+            PumpSpec(
+                pump_id=f"P{i+1}",
+                max_flow_m3_s=1.5,  # Approximate max flow per pump
+                max_power_kw=350.0,
+                min_frequency_hz=47.8,
+                max_frequency_hz=50.0,
+                preferred_freq_min_hz=47.8,
+                preferred_freq_max_hz=49.0,
+            )
+            for i in range(8)
+        ]
+        
+        constraints = SystemConstraints(
+            l1_min_m=0.5,
+            l1_max_m=8.0,
+            tunnel_volume_m3=50000.0,  # Approximate tunnel volume
+            min_pumps_on=1,
+            min_pump_on_duration_minutes=120,
+            min_pump_off_duration_minutes=120,
+            flush_frequency_days=1,
+            flush_target_level_m=0.5,
+        )
+        
+        self.optimizer = MPCOptimizer(
+            pumps=pumps,
+            constraints=constraints,
+            time_step_minutes=15,
+            tactical_horizon_minutes=120,
+            strategic_horizon_minutes=1440,
+        )
 
     def configure(self) -> None:
         self.register_tool("generate_schedule", self.generate_schedule)
 
     def generate_schedule(self, request: OptimizationRequest) -> OptimizationResponse:
+        """Generate optimal pump schedule using MPC optimization."""
+        try:
+            # Gather current state and forecasts
+            current_state = self._get_current_state()
+            forecast = self._get_forecasts(request.horizon_minutes)
+            
+            # Solve optimization
+            result = self.optimizer.solve_optimization(
+                current_state=current_state,
+                forecast=forecast,
+                mode=OptimizationMode.FULL,
+                timeout_seconds=30,
+            )
+            
+            if not result.success:
+                # Try fallback
+                result = self.optimizer.solve_optimization(
+                    current_state=current_state,
+                    forecast=forecast,
+                    mode=OptimizationMode.RULE_BASED,
+                    timeout_seconds=10,
+                )
+            
+            # Convert to response format
+            entries = self._convert_to_entries(result, forecast.timestamps)
+            
+            # Generate explanation
+            metrics = self._compute_metrics(result, forecast)
+            strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
+            
+            # Try LLM explanation if available, otherwise use fallback
+            explanation = self._generate_explanation(metrics, strategic_guidance, current_state)
+            
+            return OptimizationResponse(
+                generated_at=datetime.utcnow(),
+                entries=entries,
+                justification=explanation,
+                total_cost_eur=result.total_cost_eur,
+                total_energy_kwh=result.total_energy_kwh,
+                optimization_mode=result.mode.value,
+            )
+        except Exception as e:
+            # Fallback to safe rule-based schedule
+            return self._generate_fallback_schedule(request)
+
+    def _get_current_state(self) -> CurrentState:
+        """Get current system state from status agent or stub."""
+        try:
+            # Try to call status agent
+            response = httpx.get(f"{self.status_agent_url}/get_current_system_state", timeout=5.0)
+            if response.status_code == 200:
+                data = response.json()
+                pumps = [
+                    (p["pump_id"], p.get("state") == "on", p.get("frequency_hz", 0.0))
+                    for p in data.get("pumps", [])
+                ]
+                return CurrentState(
+                    timestamp=datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00")),
+                    l1_m=data.get("tunnel_level_m", 3.2),
+                    inflow_m3_s=data.get("inflow_m3_s", 2.1),
+                    outflow_m3_s=data.get("outflow_m3_s", 2.0),
+                    pump_states=pumps,
+                    price_eur_mwh=data.get("price_eur_mwh", 72.5),
+                )
+        except Exception:
+            pass
+        
+        # Fallback to stub data
+        return CurrentState(
+            timestamp=datetime.utcnow(),
+            l1_m=3.2,
+            inflow_m3_s=2.1,
+            outflow_m3_s=2.0,
+            pump_states=[
+                (f"P{i+1}", i % 2 == 0, 48.0 if i % 2 == 0 else 0.0)
+                for i in range(8)
+            ],
+            price_eur_mwh=72.5,
+        )
+
+    def _get_forecasts(self, horizon_minutes: int) -> ForecastData:
+        """Get forecasts from agents or generate stub data."""
+        num_steps = horizon_minutes // 15  # 15-minute steps
         now = datetime.utcnow()
-        start = now.replace(minute=0, second=0, microsecond=0)
+        timestamps = [now + timedelta(minutes=i * 15) for i in range(num_steps)]
+        
+        # Try to get price forecast
+        price_forecast = []
+        try:
+            response = httpx.post(
+                f"{self.price_agent_url}/get_electricity_price_forecast",
+                json={"lookahead_hours": horizon_minutes / 60},
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                price_forecast = [p.get("eur_mwh", 70.0) for p in data]
+        except Exception:
+            pass
+        
+        # Try to get inflow forecast
+        inflow_forecast = []
+        try:
+            response = httpx.post(
+                f"{self.inflow_agent_url}/predict_inflow",
+                json={"lookahead_hours": horizon_minutes / 60},
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                inflow_forecast = [p.get("inflow_m3_s", 2.0) for p in data]
+        except Exception:
+            pass
+        
+        # Fill in stub data if needed
+        if not price_forecast:
+            price_forecast = [70.0 + i * 1.5 for i in range(num_steps)]
+        
+        if not inflow_forecast:
+            inflow_forecast = [2.0 + i * 0.05 for i in range(num_steps)]
+        
+        # Ensure correct length
+        while len(price_forecast) < num_steps:
+            price_forecast.append(price_forecast[-1] if price_forecast else 70.0)
+        
+        while len(inflow_forecast) < num_steps:
+            inflow_forecast.append(inflow_forecast[-1] if inflow_forecast else 2.0)
+        
+        return ForecastData(
+            timestamps=timestamps[:num_steps],
+            inflow_m3_s=inflow_forecast[:num_steps],
+            price_eur_mwh=price_forecast[:num_steps],
+        )
+
+    def _convert_to_entries(
+        self, result, timestamps: List[datetime]
+    ) -> List[ScheduleEntry]:
+        """Convert optimizer result to schedule entries."""
+        entries = []
+        
+        # Group schedules by pump and time
+        pump_schedules = {}
+        for sched in result.schedules:
+            if sched.is_on:
+                pump_id = sched.pump_id
+                if pump_id not in pump_schedules:
+                    pump_schedules[pump_id] = []
+                pump_schedules[pump_id].append((sched.time_step, sched))
+        
+        # Create entries with time ranges
+        for pump_id, steps in pump_schedules.items():
+            steps.sort(key=lambda x: x[0])
+            
+            current_start = None
+            current_freq = None
+            
+            for step_idx, sched in steps:
+                if current_start is None:
+                    current_start = step_idx
+                    current_freq = sched.frequency_hz
+                elif sched.frequency_hz != current_freq or step_idx != current_start + 1:
+                    # End current entry and start new one
+                    if current_start < len(timestamps):
+                        entries.append(
+                            ScheduleEntry(
+                                pump_id=pump_id,
+                                start_time=timestamps[current_start],
+                                end_time=timestamps[min(step_idx - 1, len(timestamps) - 1)],
+                                target_frequency_hz=current_freq,
+                            )
+                        )
+                    current_start = step_idx
+                    current_freq = sched.frequency_hz
+                else:
+                    # Continue current entry
+                    pass
+            
+            # Add final entry
+            if current_start is not None and current_start < len(timestamps):
+                entries.append(
+                    ScheduleEntry(
+                        pump_id=pump_id,
+                        start_time=timestamps[current_start],
+                        end_time=timestamps[min(len(timestamps) - 1, steps[-1][0])],
+                        target_frequency_hz=current_freq or 48.0,
+                    )
+                )
+        
+        # If no entries generated, create at least one safe entry
+        if not entries:
+            entries.append(
+                ScheduleEntry(
+                    pump_id="P1",
+                    start_time=timestamps[0],
+                    end_time=timestamps[-1] if len(timestamps) > 1 else timestamps[0],
+                    target_frequency_hz=48.0,
+                )
+            )
+        
+        return entries
+
+    def _compute_metrics(self, result, forecast: ForecastData) -> ScheduleMetrics:
+        """Compute metrics for explanation."""
+        if not result.l1_trajectory:
+            return ScheduleMetrics(
+                total_energy_kwh=result.total_energy_kwh,
+                total_cost_eur=result.total_cost_eur,
+                avg_l1_m=3.0,
+                min_l1_m=0.5,
+                max_l1_m=8.0,
+                num_pumps_used=1,
+                avg_outflow_m3_s=2.0,
+                price_range_eur_mwh=(70.0, 80.0),
+                risk_level="normal",
+                optimization_mode=result.mode.value,
+            )
+        
+        pumps_used = len(set(s.pump_id for s in result.schedules if s.is_on))
+        total_outflow = sum(s.flow_m3_s for s in result.schedules if s.is_on)
+        num_on_steps = len([s for s in result.schedules if s.is_on])
+        avg_outflow = total_outflow / max(1, num_on_steps) if num_on_steps > 0 else 0.0
+        
+        return ScheduleMetrics(
+            total_energy_kwh=result.total_energy_kwh,
+            total_cost_eur=result.total_cost_eur,
+            avg_l1_m=sum(result.l1_trajectory) / len(result.l1_trajectory),
+            min_l1_m=min(result.l1_trajectory),
+            max_l1_m=max(result.l1_trajectory),
+            num_pumps_used=pumps_used,
+            avg_outflow_m3_s=avg_outflow,
+            price_range_eur_mwh=(min(forecast.price_eur_mwh), max(forecast.price_eur_mwh)),
+            risk_level="normal",  # Could be computed from optimizer
+            optimization_mode=result.mode.value,
+        )
+
+    def _generate_explanation(
+        self,
+        metrics,
+        strategic_guidance: List[str],
+        current_state: CurrentState,
+    ) -> str:
+        """Generate explanation using LLM if available, otherwise fallback."""
+        # Build current state description
+        current_state_desc = (
+            f"Tunnel level: {current_state.l1_m:.2f}m, "
+            f"Inflow: {current_state.inflow_m3_s:.2f} m³/s, "
+            f"Price: {current_state.price_eur_mwh:.1f} EUR/MWh"
+        )
+        
+        # Log strategy
+        strategy_summary = ", ".join(set(strategic_guidance[:4]))
+        logger.info(f"Strategy: {strategy_summary}")
+        
+        # Try async LLM call in sync context using asyncio
+        if self.explainer.api_base and self.explainer.api_key:
+            logger.info("LLM explainer: Attempting to generate explanation via LLM")
+            try:
+                import asyncio
+                # Try to get existing event loop, or create new one
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run async LLM call
+                explanation = loop.run_until_complete(
+                    self.explainer.generate_explanation(
+                        metrics=metrics,
+                        strategic_guidance=strategic_guidance,
+                        current_state_description=current_state_desc,
+                    )
+                )
+                logger.info(f"LLM explainer: Successfully generated explanation via LLM")
+                logger.info(f"LLM Explanation: {explanation}")
+                return explanation
+            except Exception as e:
+                # Fall back to rule-based explanation on error
+                logger.warning(f"LLM explainer: Failed to generate explanation: {e}. Using fallback.")
+                fallback_explanation = self.explainer._generate_fallback_explanation(
+                    metrics, strategic_guidance
+                )
+                logger.info(f"Fallback Explanation: {fallback_explanation}")
+                return fallback_explanation
+        else:
+            # No LLM credentials, use fallback
+            logger.info("LLM explainer: Not configured (missing API credentials). Using fallback explanation.")
+            fallback_explanation = self.explainer._generate_fallback_explanation(
+                metrics, strategic_guidance
+            )
+            logger.info(f"Fallback Explanation: {fallback_explanation}")
+            return fallback_explanation
+
+    def _generate_fallback_schedule(self, request: OptimizationRequest) -> OptimizationResponse:
+        """Generate a simple fallback schedule if optimization fails."""
+        now = datetime.utcnow()
+        start = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         entries = [
             ScheduleEntry(
                 pump_id="P1",
                 start_time=start,
-                end_time=start + timedelta(minutes=request.horizon_minutes // 2),
-                target_frequency_hz=48.5,
-            ),
-            ScheduleEntry(
-                pump_id="P2",
-                start_time=start + timedelta(minutes=30),
                 end_time=start + timedelta(minutes=request.horizon_minutes),
-                target_frequency_hz=47.8,
-            ),
+                target_frequency_hz=48.0,
+            )
         ]
         return OptimizationResponse(
             generated_at=now,
             entries=entries,
-            justification="Maintain safe tunnel level while minimizing cost.",
+            justification="Safe fallback schedule: maintaining minimum pumping for safety.",
+            total_cost_eur=0.0,
+            total_energy_kwh=0.0,
+            optimization_mode="fallback",
         )
 
 
 def serve() -> None:
+    """Serve the optimization agent."""
     OptimizationAgent().serve()
 
 

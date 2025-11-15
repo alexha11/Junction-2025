@@ -1,0 +1,240 @@
+OPTIMIZER AGENT - COMPONENT TREE
+================================
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                        OPTIMIZATION AGENT SYSTEM                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+📁 optimizer_agent/
+│
+├── 🔧 CORE COMPONENTS
+│   │
+│   ├── main.py (434 lines)
+│   │   └── OptimizationAgent
+│   │       ├── BaseMCPAgent (inheritance)
+│   │       ├── MPCOptimizer (composition)
+│   │       ├── LLMExplainer (composition)
+│   │       │
+│   │       ├── generate_schedule()
+│   │       │   ├── _get_current_state()
+│   │       │   ├── _get_forecasts()
+│   │       │   ├── optimizer.solve_optimization()
+│   │       │   ├── _compute_metrics()
+│   │       │   ├── _generate_explanation() ──────► LLM
+│   │       │   └── _convert_to_entries()
+│   │       │
+│   │       ├── _generate_explanation()
+│   │       │   ├── LLMExplainer.generate_explanation() ──► API
+│   │       │   └── LLMExplainer._generate_fallback_explanation()
+│   │       │
+│   │       └── _generate_fallback_schedule()
+│   │
+│   ├── optimizer.py (780 lines)
+│   │   └── MPCOptimizer
+│   │       ├── PumpSpec (list)
+│   │       ├── SystemConstraints
+│   │       │
+│   │       ├── solve_optimization()
+│   │       │   ├── _solve_full_optimization()
+│   │       │   │   ├── OR-Tools Solver (SCIP)
+│   │       │   │   ├── Dual-Horizon Strategy
+│   │       │   │   │   ├── Strategic (24h)
+│   │       │   │   │   └── Tactical (2h)
+│   │       │   │   ├── Variables: pump_on, freq, l1_violations
+│   │       │   │   ├── Constraints: bounds, min_on/off, violations
+│   │       │   │   └── Objectives: cost, energy, smoothness, fairness
+│   │       │   │
+│   │       │   ├── _solve_simplified_optimization() [fallback]
+│   │       │   │   └── Simplified constraints
+│   │       │   │
+│   │       │   └── _solve_rule_based() [fallback]
+│   │       │       └── Rule-based heuristics
+│   │       │
+│   │       ├── derive_strategic_guidance()
+│   │       │   └── CHEAP / EXPENSIVE / NORMAL periods
+│   │       │
+│   │       └── get_adaptive_weights()
+│   │           └── Risk-based objective weighting
+│   │
+│   └── explainability.py (170 lines)
+│       └── LLMExplainer
+│           ├── api_base, api_key, model
+│           │
+│           ├── generate_explanation() [async]
+│           │   ├── _build_prompt()
+│           │   ├── httpx.AsyncClient ──────► Featherless API
+│           │   └── Response parsing
+│           │
+│           └── _generate_fallback_explanation()
+│               └── Rule-based explanation
+│
+├── 📊 DATA LAYER
+│   │
+│   └── test_data_loader.py (299 lines)
+│       └── HSYDataLoader
+│           ├── _load_data()
+│           │   └── pandas.read_excel()
+│           │
+│           ├── get_state_at_time()
+│           │   └── CurrentState (l1, inflow, outflow, price)
+│           │
+│           ├── get_forecast_from_time()
+│           │   ├── ForecastData (perfect/persistence)
+│           │   └── inflow, price forecasts
+│           │
+│           ├── get_baseline_schedule_at_time()
+│           │   └── Historical pump schedules
+│           │
+│           └── get_pump_specs_from_data()
+│               └── PumpSpec extraction
+│
+├── 🧪 TESTING & SIMULATION
+│   │
+│   ├── test_simulator.py (437 lines)
+│   │   └── RollingMPCSimulator
+│   │       ├── HSYDataLoader (composition)
+│   │       ├── MPCOptimizer (composition)
+│   │       ├── LLMExplainer (optional composition)
+│   │       │
+│   │       ├── simulate()
+│   │       │   └── Loop: current_time to end_time
+│   │       │       ├── Get current state
+│   │       │       ├── Get forecast
+│   │       │       ├── optimizer.solve_optimization() ───┐
+│   │       │       │                                      │
+│   │       │       ├── Generate explanation [if LLM]     │
+│   │       │       │   ├── derive_strategic_guidance()   │
+│   │       │       │   ├── _compute_step_metrics()       │
+│   │       │       │   └── llm_explainer.generate_explanation() ──► API
+│   │       │       │                                      │
+│   │       │       └── Store SimulationResult            │
+│   │       │           └── explanation, strategy, result │
+│   │       │                                           │
+│   │       ├── compare_with_baseline()                 │
+│   │       │   └── Calculate metrics                   │
+│   │       │                                          │
+│   │       └── _compute_step_metrics()                │
+│   │           └── ScheduleMetrics ──────────────────┘
+│   │
+│   ├── test_metrics.py (232 lines)
+│   │   └── MetricsCalculator
+│   │       ├── RollingMPCSimulator (composition)
+│   │       ├── LLMExplainer (optional composition)
+│   │       │
+│   │       └── generate_comparison_report()
+│   │           ├── Energy metrics (optimized vs baseline)
+│   │           ├── Cost metrics
+│   │           ├── Violation metrics
+│   │           ├── Smoothness metrics
+│   │           ├── Pump operating hours
+│   │           ├── Specific energy
+│   │           └── LLM summary explanation [if LLM]
+│   │
+│   └── test_optimizer_with_data.py (309 lines)
+│       └── Main Test Script
+│           ├── Parse arguments
+│           ├── Load .env file
+│           ├── HSYDataLoader ───┐
+│           ├── Create MPCOptimizer │
+│           ├── Initialize LLMExplainer [if --use-llm] │
+│           ├── RollingMPCSimulator ────────────────┘
+│           ├── Run simulation
+│           ├── MetricsCalculator
+│           └── Generate report
+│
+└── ⚙️ CONFIGURATION
+    │
+    ├── .env
+    │   ├── FEATHERLESS_API_BASE
+    │   ├── FEATHERLESS_API_KEY
+    │   └── LLM_MODEL
+    │
+    └── PLAN.md (Implementation guidelines)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 DATA FLOW
+────────────
+
+[Historical Data] 
+    ↓
+[HSYDataLoader]
+    ↓
+[CurrentState + ForecastData]
+    ↓
+[MPCOptimizer.solve_optimization()]
+    ↓
+    ├─→ [OR-Tools Solver]
+    │       ↓
+    │   [OptimizationResult]
+    │       ↓
+    └─→ [OptimizationAgent / RollingMPCSimulator]
+            ↓
+        [Compute Metrics]
+            ↓
+        [LLMExplainer.generate_explanation()] ───► [Featherless API]
+            ↓
+        [Explanation Text]
+            ↓
+        [OptimizationResponse / SimulationResult]
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔄 OPTIMIZATION MODES (Fallback Chain)
+───────────────────────────────────────
+
+Full Optimization
+    ├─→ Success → Return Result
+    │
+    └─→ Failure → Simplified Optimization
+                      ├─→ Success → Return Result
+                      │
+                      └─→ Failure → Rule-Based
+                                        └─→ Always Success → Return Result
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 OPTIMIZATION OBJECTIVES (Weighted)
+──────────────────────────────────────
+
+Total Objective = 
+    cost_weight × Cost Objective +
+    energy_weight × Energy Objective +
+    smoothness_weight × Outflow Smoothness +
+    fairness_weight × Pump Fairness +
+    violation_penalty × L1 Violation Penalty
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 EXTERNAL DEPENDENCIES
+─────────────────────────
+
+Python Packages:
+    • ortools (OR-Tools Solver)
+    • numpy, pandas (Data processing)
+    • httpx (HTTP client for LLM API)
+    • python-dotenv (Environment variables)
+    • pydantic (Data validation)
+
+External Services:
+    • Featherless API (LLM explanations)
+        └─→ meta-llama/Meta-Llama-3.1-8B-Instruct
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 STATISTICS
+─────────────
+
+Total Lines of Code: 2,661 lines
+Core Components:     1,384 lines (52%)
+Testing/Simulation:  978 lines  (37%)
+Data Layer:          299 lines  (11%)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
