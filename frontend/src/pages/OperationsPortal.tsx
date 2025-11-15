@@ -213,7 +213,7 @@ const OperationsPortal = () => {
                 : "Waiting for feed"}
             </p>
           </div>
-          <div className="mt-4 max-h-[320px] overflow-auto rounded-3xl border border-white/5">
+          <div className="mt-4 max-h-[320px] overflow-auto rounded-3xl border border-white/5 scroll-glow">
             <table className="w-full text-sm text-slate-300">
               <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
                 <tr>

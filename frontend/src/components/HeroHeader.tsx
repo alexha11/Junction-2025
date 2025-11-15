@@ -91,8 +91,8 @@ const HeroHeader: FC<Props> = ({ state, schedule, alertsCount }) => {
   ];
 
   return (
-    <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-slate-950/95 via-slate-950/70 to-slate-900/30 p-8 shadow-card">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(56,189,248,0.35),transparent_60%),radial-gradient(circle_at_90%_20%,rgba(249,115,22,0.2),transparent_65%)]" />
+    <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-br from-brand-base/95 via-brand-base/70 to-brand-surface/40 p-8 shadow-card">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_0%,rgba(0,180,157,0.35),transparent_60%),radial-gradient(circle_at_85%_15%,rgba(90,185,70,0.25),transparent_65%)]" />
       <div className="flex flex-wrap items-center gap-3 text-xs font-medium uppercase tracking-wider text-slate-200">
         <span className="rounded-full border border-white/15 px-3 py-1 text-white/90">
           HSY · Blominmäki
