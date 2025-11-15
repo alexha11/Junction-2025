@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -126,7 +127,7 @@ class MPCOptimizer:
         pumps: List[PumpSpec],
         constraints: SystemConstraints,
         time_step_minutes: int = 15,
-        tactical_horizon_minutes: int = 360,  # 6h tactical (improved from 2h)
+        tactical_horizon_minutes: int = 120,  # 2h tactical horizon
         strategic_horizon_minutes: int = 1440,  # 24h strategic
     ):
         self.pumps = {p.pump_id: p for p in pumps}
@@ -176,31 +177,46 @@ class MPCOptimizer:
             return RiskLevel.LOW
 
     def get_adaptive_weights(self, risk_level: RiskLevel) -> dict:
-        """Get adaptive objective weights based on risk level."""
+        """Get adaptive objective weights based on risk level.
+
+        Notes:
+            The "rotation" weight controls how strongly we prefer balancing
+            usage across pumps with the same capacity. It is kept moderate in
+            low/normal risk so that rotation is visible over multi-day
+            horizons, and driven close to zero in high/critical risk so
+            safety and hard constraints always dominate fairness.
+        """
         weights = {
             RiskLevel.LOW: {
                 "cost": 1.0,
-                "smoothness": 0.8,  # Increased from 0.2 - smooth outflow is desirable requirement
+                "smoothness": 0.8,  # Smooth outflow is desirable requirement
                 "safety_margin": 0.1,
-                "specific_energy": 0.7,  # Increased from 0.6 - minimize kWh/m³ requirement
+                "specific_energy": 0.7,  # Minimize kWh/m³ requirement
+                # Encourage noticeable rotation when system is far from bounds
+                "rotation": 0.10,
             },
             RiskLevel.NORMAL: {
                 "cost": 0.8,
-                "smoothness": 0.7,  # Increased from 0.2 - smooth outflow is desirable requirement
+                "smoothness": 0.7,
                 "safety_margin": 0.3,
-                "specific_energy": 0.6,  # Increased from 0.5 - minimize kWh/m³ requirement
+                "specific_energy": 0.6,
+                # Slightly stronger rotation in normal conditions
+                "rotation": 0.15,
             },
             RiskLevel.HIGH: {
                 "cost": 0.4,
-                "smoothness": 0.5,  # Increased from 0.1 - still prioritize smoothness even in high risk
+                "smoothness": 0.5,
                 "safety_margin": 0.8,
-                "specific_energy": 0.4,  # Increased from 0.3 - maintain efficiency requirement
+                "specific_energy": 0.4,
+                # Keep rotation very small when close to bounds
+                "rotation": 0.03,
             },
             RiskLevel.CRITICAL: {
                 "cost": 0.1,
-                "smoothness": 0.3,  # Increased from 0.05 - smoothness still matters even in critical
+                "smoothness": 0.3,
                 "safety_margin": 2.0,
-                "specific_energy": 0.2,  # Increased from 0.15 - efficiency requirement
+                "specific_energy": 0.2,
+                "rotation": 0.0,  # Disabled in critical risk
             },
         }
         return weights[risk_level]
@@ -469,6 +485,8 @@ class MPCOptimizer:
         forecast_quality: Optional[Dict[str, Any]] = None,  # Optional forecast quality metrics
         emergency_response: Optional[Any] = None,  # Optional EmergencyResponse from LLM
         hours_since_last_flush: Optional[float] = None,  # Hours since last flush (for daily flush constraint)
+        pump_usage_hours: Optional[Dict[str, float]] = None,  # Cumulative usage hours per pump_id for fairness/rotation
+        pump_durations: Optional[Dict[str, Dict[str, float]]] = None,  # How long each pump has been on/off (in minutes) for rotation-aware min duration
     ) -> OptimizationResult:
         """Solve the optimization problem using OR-Tools.
         
@@ -537,9 +555,14 @@ class MPCOptimizer:
             # Try full optimization first
             if mode == OptimizationMode.FULL:
                 result = self._solve_full_optimization(
-                    current_state, forecast, weights, timeout_seconds, 
+                    current_state,
+                    forecast,
+                    weights,
+                    timeout_seconds,
                     strategic_plan=strategic_plan,
                     hours_since_last_flush=hours_since_last_flush,
+                    pump_usage_hours=pump_usage_hours,
+                    pump_durations=pump_durations,
                 )
                 if result.success:
                     solve_time = time.time() - start_time
@@ -590,6 +613,8 @@ class MPCOptimizer:
         timeout_seconds: int,
         strategic_plan: Optional[Any] = None,
         hours_since_last_flush: Optional[float] = None,
+        pump_usage_hours: Optional[Dict[str, float]] = None,
+        pump_durations: Optional[Dict[str, Dict[str, float]]] = None,
     ) -> OptimizationResult:
         """Solve full optimization with all constraints."""
         import logging
@@ -666,6 +691,59 @@ class MPCOptimizer:
         num_steps = len(forecast.timestamps)
         pump_ids = list(self.pumps.keys())
         
+        # Sort pumps by usage (least used first) to break solver bias
+        # This ensures the solver prefers less-used pumps when they're equivalent
+        # More deterministic than random shuffling
+        if pump_usage_hours:
+            # Sort by usage hours (ascending) - least used first
+            pump_ids = sorted(pump_ids, key=lambda pid: pump_usage_hours.get(pid, 0.0))
+        
+        # Fairness/rotation coefficients per pump (higher for over-used pumps
+        # in their capacity class). We build groups in a way that is robust
+        # to small spec differences and explicitly couples 1.1/2.1 (small
+        # pumps) and the large pumps across both lines.
+        rotation_coeff: Dict[str, float] = {pid: 0.0 for pid in pump_ids}
+        if pump_usage_hours:
+            # Explicit grouping by pump ID pattern for this plant:
+            # - Small pumps: 1.1 and 2.1
+            # - Large pumps: all remaining pumps
+            small_group = [pid for pid in pump_ids if pid.endswith(".1")]
+            large_group = [pid for pid in pump_ids if pid not in small_group]
+
+            groups: List[List[str]] = []
+            if len(small_group) > 1:
+                groups.append(small_group)
+            if len(large_group) > 1:
+                groups.append(large_group)
+
+            # For any remaining pumps (different naming schemes / other plants),
+            # fall back to coarse capacity-based grouping using rounded values
+            # so that pumps with nearly-identical specs still rotate.
+            assigned: set[str] = set(pid for group in groups for pid in group)
+            remaining = [pid for pid in pump_ids if pid not in assigned]
+            if remaining:
+                cap_groups: Dict[Tuple[float, float], List[str]] = {}
+                for pid in remaining:
+                    spec = self.pumps[pid]
+                    key = (round(spec.max_flow_m3_s, 2), round(spec.max_power_kw, -1))
+                    cap_groups.setdefault(key, []).append(pid)
+                for group_pumps in cap_groups.values():
+                    if len(group_pumps) > 1:
+                        groups.append(group_pumps)
+
+            # Within each group, compute how far above the group average usage
+            # each pump is. Only over-used pumps get a positive coefficient;
+            # under-used pumps get 0 so they are preferred.
+            for group_pumps in groups:
+                group_hours = [pump_usage_hours.get(pid, 0.0) for pid in group_pumps]
+                if not group_hours:
+                    continue
+                group_avg = float(np.mean(group_hours))
+                for pid, hours in zip(group_pumps, group_hours):
+                    delta = hours - group_avg
+                    if delta > 0.0:
+                        rotation_coeff[pid] = delta
+
         # Decision variables
         # pump_on[pump_id][t] = 1 if pump is on at time t, 0 otherwise
         pump_on = {}
@@ -893,8 +971,10 @@ class MPCOptimizer:
                 solver.Add(l1[t] <= self.constraints.l1_max_m)
         
         # Minimum on/off durations
-        min_on_steps = self.constraints.min_pump_on_duration_minutes // self.time_step_minutes
-        min_off_steps = self.constraints.min_pump_off_duration_minutes // self.time_step_minutes
+        min_on_minutes = self.constraints.min_pump_on_duration_minutes
+        min_off_minutes = self.constraints.min_pump_off_duration_minutes
+        min_on_steps = min_on_minutes // self.time_step_minutes
+        min_off_steps = min_off_minutes // self.time_step_minutes
         
         for pid in pump_ids:
             current_is_on = next(
@@ -902,48 +982,97 @@ class MPCOptimizer:
                 False
             )
             
-            # Continuity constraints for first few steps
-            for t in range(min(min_on_steps, num_steps)):
-                if current_is_on:
+            # Check how long pump has been on/off (if duration tracking available)
+            # This allows rotation if minimum duration has already been met
+            on_duration_minutes = 0.0
+            off_duration_minutes = 0.0
+            if pump_durations and pid in pump_durations:
+                on_duration_minutes = pump_durations[pid].get("on_minutes", 0.0)
+                off_duration_minutes = pump_durations[pid].get("off_minutes", 0.0)
+            
+            # Calculate remaining steps needed to meet minimum duration
+            # If pump has already been on/off for >= minimum, allow immediate rotation
+            remaining_on_steps = max(0, min_on_steps - int(on_duration_minutes / self.time_step_minutes))
+            remaining_off_steps = max(0, min_off_steps - int(off_duration_minutes / self.time_step_minutes))
+            
+            # Continuity constraints: only enforce if pump hasn't met minimum duration yet
+            if current_is_on and remaining_on_steps > 0:
+                # Pump is on and hasn't met minimum on duration - must stay on
+                for t in range(min(remaining_on_steps, num_steps)):
                     solver.Add(pump_on[pid][t] == 1)
-            for t in range(min(min_off_steps, num_steps)):
-                if not current_is_on:
+            elif not current_is_on and remaining_off_steps > 0:
+                # Pump is off and hasn't met minimum off duration - must stay off
+                for t in range(min(remaining_off_steps, num_steps)):
                     solver.Add(pump_on[pid][t] == 0)
+            # If minimum duration is already met, pump can rotate immediately
             
             # General minimum duration constraints using sequence constraints
-            # If pump turns on at t, it must stay on for at least min_on_steps
-            for t in range(num_steps - min_on_steps + 1):
-                if t > 0:
-                    # Detect when pump turns on (transition from 0 to 1)
-                    was_off = solver.BoolVar(f"was_off_{pid}_{t}")
-                    turns_on = solver.BoolVar(f"turns_on_{pid}_{t}")
-                    
-                    # was_off = not pump_on[t-1]
-                    solver.Add(was_off == 1 - pump_on[pid][t - 1])
-                    # turns_on = was_off AND pump_on[t]
-                    solver.Add(turns_on <= was_off)
-                    solver.Add(turns_on <= pump_on[pid][t])
-                    solver.Add(turns_on >= was_off + pump_on[pid][t] - 1)
-                    
-                    # If pump turns on at t, it must stay on for min_on_steps
-                    for s in range(min_on_steps):
-                        if t + s < num_steps:
-                            solver.Add(pump_on[pid][t + s] >= turns_on)
+            # Only apply if pump hasn't already met the minimum duration
+            # If pump turns on at t, it must stay on for remaining min_on_steps
+            if remaining_on_steps > 0:
+                for t in range(num_steps - remaining_on_steps + 1):
+                    if t > 0:
+                        # Detect when pump turns on (transition from 0 to 1)
+                        was_off = solver.BoolVar(f"was_off_{pid}_{t}")
+                        turns_on = solver.BoolVar(f"turns_on_{pid}_{t}")
+                        
+                        # was_off = not pump_on[t-1]
+                        solver.Add(was_off == 1 - pump_on[pid][t - 1])
+                        # turns_on = was_off AND pump_on[t]
+                        solver.Add(turns_on <= was_off)
+                        solver.Add(turns_on <= pump_on[pid][t])
+                        solver.Add(turns_on >= was_off + pump_on[pid][t] - 1)
+                        
+                        # If pump turns on at t, it must stay on for remaining_on_steps
+                        for s in range(remaining_on_steps):
+                            if t + s < num_steps:
+                                solver.Add(pump_on[pid][t + s] >= turns_on)
+            else:
+                # Pump has already met minimum on duration - apply normal min duration for new turn-ons
+                for t in range(num_steps - min_on_steps + 1):
+                    if t > 0:
+                        was_off = solver.BoolVar(f"was_off_{pid}_{t}")
+                        turns_on = solver.BoolVar(f"turns_on_{pid}_{t}")
+                        
+                        solver.Add(was_off == 1 - pump_on[pid][t - 1])
+                        solver.Add(turns_on <= was_off)
+                        solver.Add(turns_on <= pump_on[pid][t])
+                        solver.Add(turns_on >= was_off + pump_on[pid][t] - 1)
+                        
+                        for s in range(min_on_steps):
+                            if t + s < num_steps:
+                                solver.Add(pump_on[pid][t + s] >= turns_on)
             
             # Similar for turning off
-            for t in range(num_steps - min_off_steps + 1):
-                if t > 0:
-                    was_on = solver.BoolVar(f"was_on_{pid}_{t}")
-                    turns_off = solver.BoolVar(f"turns_off_{pid}_{t}")
-                    
-                    solver.Add(was_on == pump_on[pid][t - 1])
-                    solver.Add(turns_off <= was_on)
-                    solver.Add(turns_off <= 1 - pump_on[pid][t])
-                    solver.Add(turns_off >= was_on + (1 - pump_on[pid][t]) - 1)
-                    
-                    for s in range(min_off_steps):
-                        if t + s < num_steps:
-                            solver.Add(pump_on[pid][t + s] <= 1 - turns_off)
+            if remaining_off_steps > 0:
+                for t in range(num_steps - remaining_off_steps + 1):
+                    if t > 0:
+                        was_on = solver.BoolVar(f"was_on_{pid}_{t}")
+                        turns_off = solver.BoolVar(f"turns_off_{pid}_{t}")
+                        
+                        solver.Add(was_on == pump_on[pid][t - 1])
+                        solver.Add(turns_off <= was_on)
+                        solver.Add(turns_off <= 1 - pump_on[pid][t])
+                        solver.Add(turns_off >= was_on + (1 - pump_on[pid][t]) - 1)
+                        
+                        for s in range(remaining_off_steps):
+                            if t + s < num_steps:
+                                solver.Add(pump_on[pid][t + s] <= 1 - turns_off)
+            else:
+                # Pump has already met minimum off duration - apply normal min duration for new turn-offs
+                for t in range(num_steps - min_off_steps + 1):
+                    if t > 0:
+                        was_on = solver.BoolVar(f"was_on_{pid}_{t}")
+                        turns_off = solver.BoolVar(f"turns_off_{pid}_{t}")
+                        
+                        solver.Add(was_on == pump_on[pid][t - 1])
+                        solver.Add(turns_off <= was_on)
+                        solver.Add(turns_off <= 1 - pump_on[pid][t])
+                        solver.Add(turns_off >= was_on + (1 - pump_on[pid][t]) - 1)
+                        
+                        for s in range(min_off_steps):
+                            if t + s < num_steps:
+                                solver.Add(pump_on[pid][t + s] <= 1 - turns_off)
         
         # Objective: minimize weighted combination
         cost_obj = 0.0
@@ -952,6 +1081,7 @@ class MPCOptimizer:
         specific_energy_obj = 0.0
         flush_obj = 0.0  # Flush objective (encourage daily flush)
         pump_preference_obj = 0.0  # Prefer large pumps over small pumps for efficiency
+        rotation_obj = 0.0  # Fairness/rotation objective (balance usage among identical pumps)
         
         # Cost: total energy cost
         # price_c_per_kwh is in c/kWh from inputs
@@ -963,19 +1093,50 @@ class MPCOptimizer:
                 cost_obj += energy_kwh * price_eur_per_kwh
         
         # Smoothness: minimize F2 variance (linear approximation)
-        # Use pairwise deviation instead of deviation from mean (linear programming compatible)
-        # Minimize differences between consecutive outflow values
+        # Approach: Minimize deviation from target constant outflow
+        # Target is the average of current outflow and expected average outflow
         outflow_vars = [
             sum(pump_flow[pid][t] for pid in pump_ids) for t in range(num_steps)
         ]
-        if len(outflow_vars) > 1:
-            # Minimize deviation between consecutive time steps
-            for t in range(len(outflow_vars) - 1):
-                # Linear approximation: use absolute difference between consecutive steps
-                diff_var = solver.NumVar(0.0, solver.infinity(), f"smooth_diff_{t}")
-                solver.Add(diff_var >= outflow_vars[t] - outflow_vars[t + 1])
-                solver.Add(diff_var >= outflow_vars[t + 1] - outflow_vars[t])
-                smoothness_obj += diff_var
+        
+        if len(outflow_vars) > 0:
+            # Calculate target constant outflow based on current state and forecast
+            # Use actual current outflow from state (not a variable)
+            current_outflow = current_state.outflow_m3_s
+            avg_forecast_inflow = sum(forecast.inflow_m3_s) / len(forecast.inflow_m3_s) if forecast.inflow_m3_s else current_state.inflow_m3_s
+            # Target: balance between current outflow and average expected inflow
+            # This encourages maintaining steady outflow that balances with expected inflow
+            target_outflow = (current_outflow + avg_forecast_inflow) / 2.0
+            
+            # Minimize deviation from target constant outflow
+            for t in range(len(outflow_vars)):
+                # Linear approximation: use absolute deviation from target
+                dev_var = solver.NumVar(0.0, solver.infinity(), f"smooth_dev_{t}")
+                solver.Add(dev_var >= outflow_vars[t] - target_outflow)
+                solver.Add(dev_var >= target_outflow - outflow_vars[t])
+                smoothness_obj += dev_var
+            
+            # Minimize first-order differences (rate of change)
+            if len(outflow_vars) > 1:
+                first_order_diffs = []
+                for t in range(len(outflow_vars) - 1):
+                    # Minimize change rate between consecutive steps
+                    diff_var = solver.NumVar(0.0, solver.infinity(), f"smooth_diff_{t}")
+                    solver.Add(diff_var >= outflow_vars[t] - outflow_vars[t + 1])
+                    solver.Add(diff_var >= outflow_vars[t + 1] - outflow_vars[t])
+                    first_order_diffs.append(diff_var)
+                    smoothness_obj += diff_var * 0.3  # Weight rate of change less than target deviation
+                
+                # Minimize second-order differences (changes in rate of change) to prevent oscillations
+                # This penalizes patterns like 1.1 → 1 → 1.1 → 1 (oscillating)
+                if len(first_order_diffs) > 1:
+                    for t in range(len(first_order_diffs) - 1):
+                        # Second-order difference: change in the first-order difference
+                        # If first-order diff changes sign, we have oscillation
+                        second_order_diff = solver.NumVar(0.0, solver.infinity(), f"smooth_diff2_{t}")
+                        solver.Add(second_order_diff >= first_order_diffs[t] - first_order_diffs[t + 1])
+                        solver.Add(second_order_diff >= first_order_diffs[t + 1] - first_order_diffs[t])
+                        smoothness_obj += second_order_diff * 0.5  # Penalize oscillations more than simple changes
         
         # Specific energy: minimize kWh/m³ (encourage efficient operation)
         # Linear approximation: minimize deviation from target specific energy ratio
@@ -1077,6 +1238,162 @@ class MPCOptimizer:
         # Pump preference weight: scale with specific_energy weight (efficiency-related)
         pump_preference_weight = weights.get("specific_energy", 0.0) * 0.3  # 30% of specific_energy weight (increased from 10%)
         
+        # Fairness/rotation objective: prefer pumps with minimum total runtime
+        # Direct approach: strongly prefer the least-used pump in each group
+        # IMPORTANT: Only apply rotation preference if pump can actually be turned on/off
+        # (i.e., has met minimum duration requirements)
+        if pump_usage_hours:
+            # Build groups to check usage
+            small_group = [pid for pid in pump_ids if pid.endswith(".1")]
+            large_group = [pid for pid in pump_ids if pid not in small_group]
+            
+            # For each group, find minimum usage and strongly prefer that pump
+            for group_pumps in [small_group, large_group]:
+                if len(group_pumps) < 2:
+                    continue
+                group_hours = [pump_usage_hours.get(pid, 0.0) for pid in group_pumps]
+                if not group_hours:
+                    continue
+                
+                # Find minimum usage in group
+                group_min_hours = float(np.min(group_hours))
+                
+                # For each pump, add penalty/reward based on how far from minimum
+                # BUT: only apply if pump can actually be rotated (has met min duration)
+                for pid, hours in zip(group_pumps, group_hours):
+                    # Check if this pump can be turned off (has met minimum on duration)
+                    # If pump is currently on and hasn't met min duration, don't penalize it
+                    # (the hard constraint will prevent turning it off anyway)
+                    current_is_on = next(
+                        (s[1] for s in current_state.pump_states if s[0] == pid),
+                        False
+                    )
+                    
+                    # Check if pump has met minimum on duration (can be turned off)
+                    can_turn_off = True
+                    if current_is_on and pump_durations and pid in pump_durations:
+                        on_duration_minutes = pump_durations[pid].get("on_minutes", 0.0)
+                        min_on_minutes = self.constraints.min_pump_on_duration_minutes
+                        if on_duration_minutes < min_on_minutes:
+                            # Pump is on but hasn't met minimum - can't turn it off yet
+                            can_turn_off = False
+                    
+                    if hours > group_min_hours:
+                        # Penalty for pumps above minimum: proportional to difference
+                        # Strong enough to overcome small cost differences
+                        # BUT: only penalize if pump can actually be turned off
+                        if can_turn_off:
+                            penalty = (hours - group_min_hours) * 25.0  # Strong penalty
+                            # Minimum penalty even for small differences to ensure rotation
+                            if hours > group_min_hours * 1.05:  # At least 5% more than minimum
+                                penalty = max(penalty, 2.0)  # Minimum 2.0 penalty
+                            for t in range(num_steps):
+                                rotation_obj += penalty * pump_on[pid][t]
+                        # If can't turn off, don't add penalty (hard constraint will handle it)
+                    else:
+                        # Reward for minimum-used pump (negative penalty = reward)
+                        # This makes it strongly preferred when only one is needed
+                        # Always reward minimum-used pump (it can always be turned on)
+                        reward = 5.0  # Strong fixed reward for minimum-used pump
+                        for t in range(num_steps):
+                            rotation_obj -= reward * pump_on[pid][t]  # Negative = reward
+        
+        # Also apply rotation coefficients if available (for historical usage tracking)
+        if any(rotation_coeff.values()) and weights.get("rotation", 0.0) > 0.0:
+            for t in range(num_steps):
+                for pid in pump_ids:
+                    coeff = rotation_coeff.get(pid, 0.0)
+                    if coeff > 0.0:
+                        rotation_obj += coeff * pump_on[pid][t]
+        
+        # Group fairness constraint: ensure pumps in same group have approximately equal
+        # working hours within this optimization horizon (especially on normal days)
+        group_fairness_obj = 0.0
+        dt_hours = self.time_step_minutes / 60.0
+        
+        # Build groups (same logic as rotation_coeff)
+        groups: List[List[str]] = []
+        if pump_usage_hours:
+            small_group = [pid for pid in pump_ids if pid.endswith(".1")]
+            large_group = [pid for pid in pump_ids if pid not in small_group]
+            if len(small_group) > 1:
+                groups.append(small_group)
+            if len(large_group) > 1:
+                groups.append(large_group)
+        else:
+            # If no usage history, still enforce fairness within horizon
+            small_group = [pid for pid in pump_ids if pid.endswith(".1")]
+            large_group = [pid for pid in pump_ids if pid not in small_group]
+            if len(small_group) > 1:
+                groups.append(small_group)
+            if len(large_group) > 1:
+                groups.append(large_group)
+        
+        # For each group, minimize the difference in working hours within this horizon
+        for group_pumps in groups:
+            if len(group_pumps) < 2:
+                continue
+            
+            # Calculate total working hours in this horizon for each pump in group
+            group_working_hours = []
+            for pid in group_pumps:
+                # Total hours this pump is on during horizon
+                pump_hours_var = solver.NumVar(0.0, num_steps * dt_hours, f"pump_hours_{pid}")
+                # Sum of pump_on over all time steps
+                solver.Add(pump_hours_var == sum(pump_on[pid][t] for t in range(num_steps)) * dt_hours)
+                group_working_hours.append(pump_hours_var)
+            
+            # Minimize the range (max - min) of working hours within group
+            if len(group_working_hours) > 1:
+                max_hours = solver.NumVar(0.0, num_steps * dt_hours, f"max_hours_group_{group_pumps[0]}")
+                min_hours = solver.NumVar(0.0, num_steps * dt_hours, f"min_hours_group_{group_pumps[0]}")
+                
+                # max_hours >= each pump's hours
+                for hours_var in group_working_hours:
+                    solver.Add(max_hours >= hours_var)
+                
+                # min_hours <= each pump's hours
+                for hours_var in group_working_hours:
+                    solver.Add(min_hours <= hours_var)
+                
+                # Minimize the range (difference between max and min)
+                range_var = solver.NumVar(0.0, num_steps * dt_hours, f"range_hours_group_{group_pumps[0]}")
+                solver.Add(range_var >= max_hours - min_hours)
+                group_fairness_obj += range_var
+                
+                # Hard constraint on normal days: maximum difference between pumps in same group
+                # This prevents one pump from taking all the hours
+                if risk_level in (RiskLevel.LOW, RiskLevel.NORMAL):
+                    # Maximum allowed difference: 10% of horizon duration (very strict)
+                    # For 6h horizon, this means max 0.6h (36 min) difference between pumps
+                    max_allowed_diff = num_steps * dt_hours * 0.10
+                    # Hard constraint: range must be within tolerance
+                    solver.Add(range_var <= max_allowed_diff)
+                    
+                    # Also add pair-wise penalties for additional enforcement
+                    for i, hours_var_i in enumerate(group_working_hours):
+                        for j, hours_var_j in enumerate(group_working_hours):
+                            if i < j:  # Only compare each pair once
+                                # Penalize large differences between pumps in same group
+                                pair_diff = solver.NumVar(0.0, num_steps * dt_hours, f"pair_diff_{group_pumps[0]}_{i}_{j}")
+                                solver.Add(pair_diff >= hours_var_i - hours_var_j)
+                                solver.Add(pair_diff >= hours_var_j - hours_var_i)
+                                # Strong penalty for pair differences
+                                group_fairness_obj += pair_diff * 2.0  # Increased from 1.0
+        
+        # Group fairness weight: MUCH stronger to prevent single pump from dominating
+        # This ensures pumps in same group have approximately equal working hours
+        # Use very strong weight - this is critical for pump rotation
+        if risk_level in (RiskLevel.LOW, RiskLevel.NORMAL):
+            # On normal days, use very strong weight (50x rotation weight or fixed high value)
+            group_fairness_weight = max(weights.get("rotation", 0.0) * 50.0, 5.0)  # At least 5.0, up to 50x rotation
+        elif risk_level == RiskLevel.HIGH:
+            group_fairness_weight = max(weights.get("rotation", 0.0) * 20.0, 2.0)  # Still strong but less
+        elif risk_level == RiskLevel.CRITICAL:
+            group_fairness_weight = 0.0  # Disabled in critical situations
+        else:
+            group_fairness_weight = max(weights.get("rotation", 0.0) * 30.0, 3.0)  # Default strong weight
+
         total_obj = (
             weights["cost"] * cost_obj +
             weights["smoothness"] * smoothness_obj +
@@ -1084,7 +1401,9 @@ class MPCOptimizer:
             weights.get("specific_energy", 0.0) * specific_energy_obj +
             pump_preference_weight * pump_preference_obj +
             violation_weight * violation_penalty_obj +
-            flush_weight * flush_obj
+            flush_weight * flush_obj +
+            weights.get("rotation", 0.0) * rotation_obj +
+            group_fairness_weight * group_fairness_obj  # Add group fairness constraint
         )
         
         solver.Minimize(total_obj)

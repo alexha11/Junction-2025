@@ -335,6 +335,11 @@ class RollingMPCSimulator:
         self.suppress_prefix = suppress_prefix
         # Initialize forecast quality tracker for recalibration loop
         self.forecast_quality_tracker = ForecastQualityTracker()
+        # Track cumulative pump usage hours for fairness/rotation
+        self.pump_usage_hours: Dict[str, float] = {}
+        # Track how long each pump has been on/off (in minutes) for rotation-aware min duration
+        # Format: {pump_id: {"on_minutes": float, "off_minutes": float}}
+        self.pump_durations: Dict[str, Dict[str, float]] = {}
 
     def simulate(
         self,
@@ -411,6 +416,7 @@ class RollingMPCSimulator:
             
             # Set pump states from previous optimization result (for continuity constraints)
             # This is what the optimizer needs to know: which pumps were on/off in the previous step
+            # Also update pump durations for rotation-aware min duration constraints
             if len(simulation.results) > 0:
                 prev_result = simulation.results[-1]
                 if prev_result.optimization_result.success and prev_result.optimization_result.schedules:
@@ -428,6 +434,27 @@ class RollingMPCSimulator:
                         else:
                             updated_pump_states.append((pump_id, False, 0.0))
                     current_state.pump_states = updated_pump_states
+                    
+                    # Update pump durations: increment on/off time for each pump
+                    dt_minutes = self.reoptimize_interval_minutes
+                    for pump_id, is_on, _ in updated_pump_states:
+                        if pump_id not in self.pump_durations:
+                            self.pump_durations[pump_id] = {"on_minutes": 0.0, "off_minutes": 0.0}
+                        
+                        if is_on:
+                            # Pump is on: increment on time, reset off time
+                            self.pump_durations[pump_id]["on_minutes"] += dt_minutes
+                            self.pump_durations[pump_id]["off_minutes"] = 0.0
+                        else:
+                            # Pump is off: increment off time, reset on time
+                            self.pump_durations[pump_id]["off_minutes"] += dt_minutes
+                            self.pump_durations[pump_id]["on_minutes"] = 0.0
+            else:
+                # First step: initialize pump durations based on initial pump states
+                for pump_id, is_on, _ in current_state.pump_states:
+                    if pump_id not in self.pump_durations:
+                        self.pump_durations[pump_id] = {"on_minutes": 0.0, "off_minutes": 0.0}
+                    # Start with 0 duration (will be updated after first optimization)
             # else: use default pump states (all off) from data loader
             
             # Track forecast errors from previous step (compare forecast vs actual)
@@ -710,16 +737,6 @@ class RollingMPCSimulator:
             num_active_pumps = len([s for s in current_state.pump_states if s[1]])  # Count pumps that are ON
             min_pumps_ok = num_active_pumps >= self.optimizer.constraints.min_pumps_on
             
-            # Check frequency constraints for active pumps
-            freq_ok = True
-            freq_violations = []
-            for pump_id, is_on, freq in current_state.pump_states:
-                if is_on:
-                    # Check if frequency is within valid range (47.8 - 50.0 Hz)
-                    if freq < 47.8 or freq > 50.0:
-                        freq_ok = False
-                        freq_violations.append(f"{pump_id}: {freq:.1f} Hz")
-            
             constraints_rows = [
                 ["L1 Min", f"{l1_min:.2f} m", f"{'✓ OK' if l1_above_min else '✗ VIOLATED'}"],
                 ["L1 Max", f"{l1_max:.2f} m", f"{'✓ OK' if l1_below_max else '✗ VIOLATED'}"],
@@ -728,19 +745,28 @@ class RollingMPCSimulator:
                 ["Active Pumps", f"{num_active_pumps}", f"{'✓' if min_pumps_ok else '✗'}"],
                 ["Min On Duration", f"{self.optimizer.constraints.min_pump_on_duration_minutes} min", "⚠ Time-based"],
                 ["Min Off Duration", f"{self.optimizer.constraints.min_pump_off_duration_minutes} min", "⚠ Time-based"],
-                ["Pump Frequency", f"47.8-50.0 Hz", f"{'✓ OK' if freq_ok else '✗ VIOLATED (' + ', '.join(freq_violations) + ')'}"],
-                ["Allow L1 Violations", f"{'Yes' if self.optimizer.constraints.allow_l1_violations else 'No'}", ""],
             ]
+            
+            # Show frequency range from pump specs (use min/max from all pumps)
+            freq_range_str = "47.8-50.0 Hz"  # Default
+            if self.optimizer.pumps:
+                # Get min/max from all pumps
+                all_min_freqs = [spec.min_frequency_hz for spec in self.optimizer.pumps.values()]
+                all_max_freqs = [spec.max_frequency_hz for spec in self.optimizer.pumps.values()]
+                if all_min_freqs and all_max_freqs:
+                    min_freq = min(all_min_freqs)
+                    max_freq = max(all_max_freqs)
+                    if min_freq == max_freq:
+                        freq_range_str = f"{min_freq:.1f} Hz"
+                    else:
+                        freq_range_str = f"{min_freq:.1f}-{max_freq:.1f} Hz"
+            
+            # Note: Frequency violation check and constraints table logging
+            # will be done after optimization result is available (see below)
+            constraints_rows.append(["Allow L1 Violations", f"{'Yes' if self.optimizer.constraints.allow_l1_violations else 'No'}", ""])
             if self.optimizer.constraints.allow_l1_violations:
                 constraints_rows.append(["Violation Tolerance", f"{self.optimizer.constraints.l1_violation_tolerance_m:.2f} m", ""])
                 constraints_rows.append(["Violation Penalty", f"{self.optimizer.constraints.l1_violation_penalty:.1f}", ""])
-            
-            # Blank line before constraints table
-            if self.suppress_prefix:
-                print()
-            else:
-                logger.info("")
-            log_table(logger, ["Constraint", "Value", "Status"], constraints_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             
             # Log pump states as table
             pump_rows = []
@@ -803,7 +829,9 @@ class RollingMPCSimulator:
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
                     emergency_response=emergency_response,  # Pass emergency response if divergence detected
                     hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
-                    )
+                    pump_usage_hours=self.pump_usage_hours,  # Pass usage for fairness/rotation
+                    pump_durations=self.pump_durations,  # Pass durations for rotation-aware min duration
+                )
                 result_rows = [
                     ["Mode", opt_result.mode.value.upper()],
                     ["Success", "✓" if opt_result.success else "✗"],
@@ -840,12 +868,48 @@ class RollingMPCSimulator:
                     forecast_quality=forecast_quality,  # Pass forecast quality for safety margins
                     emergency_response=emergency_response,  # Pass emergency response if divergence detected
                     hours_since_last_flush=hours_since_last_flush,  # Pass flush tracking
+                    pump_usage_hours=self.pump_usage_hours,  # Pass usage for fairness/rotation (unused in rule-based)
+                    pump_durations=self.pump_durations,  # Pass durations for rotation-aware min duration
                 )
                 fallback_rows = [
                     ["Mode", opt_result.mode.value.upper()],
                     ["Success", "✓" if opt_result.success else "✗"],
                 ]
                 log_table(logger, ["Status", "Value"], fallback_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
+            
+            # Check frequency constraints from optimization result (not from current_state)
+            # This checks the frequencies that were actually optimized, not historical values
+            freq_ok = True
+            freq_violations = []
+            if opt_result.success and opt_result.schedules:
+                # Check frequencies from optimization result schedules (time_step == 0)
+                for sched in opt_result.schedules:
+                    if sched.time_step == 0 and sched.is_on:
+                        # Get pump spec for this pump
+                        pump_spec = self.optimizer.pumps.get(sched.pump_id)
+                        if pump_spec:
+                            min_freq = pump_spec.min_frequency_hz
+                            max_freq = pump_spec.max_frequency_hz
+                            # Check if frequency is within valid range for this specific pump
+                            if sched.frequency_hz < min_freq or sched.frequency_hz > max_freq:
+                                freq_ok = False
+                                freq_violations.append(f"{sched.pump_id}: {sched.frequency_hz:.1f} Hz (range: {min_freq:.1f}-{max_freq:.1f} Hz)")
+                        else:
+                            # Fallback: use default range if pump spec not found
+                            if sched.frequency_hz < 47.8 or sched.frequency_hz > 50.0:
+                                freq_ok = False
+                                freq_violations.append(f"{sched.pump_id}: {sched.frequency_hz:.1f} Hz (spec not found)")
+            
+            # Add frequency constraint row with actual results from optimization
+            constraints_rows.append(["Pump Frequency", freq_range_str, f"{'✓ OK' if freq_ok else '✗ VIOLATED (' + ', '.join(freq_violations) + ')'}"])
+            
+            # Log constraints table now that we have optimization results
+            # Blank line before constraints table
+            if self.suppress_prefix:
+                print()
+            else:
+                logger.info("")
+            log_table(logger, ["Constraint", "Value", "Status"], constraints_rows, width=80, include_header=False, suppress_prefix=self.suppress_prefix)
             
             # Log optimization result
             if opt_result.success:
@@ -1032,6 +1096,13 @@ class RollingMPCSimulator:
             
             # Calculate energy and cost for this time step
             dt_hours = self.reoptimize_interval_minutes / 60.0
+            
+            # Update cumulative pump usage hours for fairness/rotation (only first step of horizon)
+            if opt_result.success and opt_result.schedules:
+                for schedule in opt_result.schedules:
+                    if schedule.time_step == 0 and schedule.is_on:
+                        pid = schedule.pump_id
+                        self.pump_usage_hours[pid] = self.pump_usage_hours.get(pid, 0.0) + dt_hours
             
             # Optimized energy/cost (from optimization result, but only for current step)
             # For rolling simulation, we track cumulative

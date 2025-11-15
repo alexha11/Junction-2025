@@ -77,11 +77,21 @@ class OptimizationAgent(BaseMCPAgent):
         # Initialize forecast quality tracker for recalibration loop
         self.forecast_quality_tracker = ForecastQualityTracker()
         
+        # Track cumulative pump usage hours for fairness/rotation in live agent
+        self.pump_usage_hours = {}
+        
         # Cache for strategic plan to avoid unnecessary LLM calls
         self._cached_strategic_plan: Optional[Any] = None
         self._cached_strategic_plan_timestamp: Optional[datetime] = None
         self._cached_forecast_hash: Optional[str] = None
         self._strategic_plan_cache_ttl_minutes: int = 60  # Cache for 1 hour by default
+        
+        # State tracking for divergence detection
+        self._previous_prediction: Optional[float] = None  # Previous L1 prediction
+        self._previous_forecast_inflow: Optional[float] = None  # Previous forecast inflow
+        self._previous_forecast_price: Optional[float] = None  # Previous forecast price
+        self._previous_prediction_timestamp: Optional[datetime] = None  # When prediction was made
+        self._prediction_state_ttl_minutes: int = 30  # Expire state after 30 minutes
 
     def _init_optimizer(self):
         """Initialize the MPC optimizer with pump specifications.
@@ -143,7 +153,7 @@ class OptimizationAgent(BaseMCPAgent):
             pumps=pumps,
             constraints=constraints,
             time_step_minutes=15,
-            tactical_horizon_minutes=360,  # 6-hour tactical horizon (changed from 2h to allow pump transitions)
+            tactical_horizon_minutes=120,  # 2-hour tactical horizon
             strategic_horizon_minutes=1440,
         )
 
@@ -162,11 +172,55 @@ class OptimizationAgent(BaseMCPAgent):
             strategic_plan = self._get_strategic_plan(current_state)
             
             # Detect divergence and generate emergency response if needed
-            # Note: In production, we'd need to track previous predictions/forecasts
-            # For now, this is a placeholder - full implementation would require state tracking
             divergence = None
             emergency_response = None
-            # TODO: Track previous predictions and forecasts to enable divergence detection in production
+            
+            # Check if we have previous prediction state (and it's not too old)
+            has_previous_state = False
+            if self._previous_prediction_timestamp:
+                age_minutes = (datetime.utcnow() - self._previous_prediction_timestamp).total_seconds() / 60
+                if age_minutes <= self._prediction_state_ttl_minutes:
+                    has_previous_state = True
+            
+            if has_previous_state:
+                # Detect divergence using previous prediction
+                divergence = self.optimizer.detect_divergence(
+                    current_state=current_state,
+                    forecast=forecast,
+                    previous_prediction=self._previous_prediction,
+                    previous_forecast_inflow=self._previous_forecast_inflow,
+                    previous_forecast_price=self._previous_forecast_price,
+                )
+                
+                # Generate emergency response if divergence detected and LLM available
+                if divergence and self.explainer.api_base and self.explainer.api_key:
+                    try:
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        emergency_response = loop.run_until_complete(
+                            self.explainer.generate_emergency_response(
+                                error_type=divergence['error_type'],
+                                error_magnitude=divergence['error_magnitude'],
+                                forecast_value=divergence['forecast_value'],
+                                actual_value=divergence['actual_value'],
+                                current_l1_m=current_state.l1_m,
+                                l1_min_m=self.optimizer.constraints.l1_min_m,
+                                l1_max_m=self.optimizer.constraints.l1_max_m,
+                                predicted_l1_m=self._previous_prediction,
+                            )
+                        )
+                        if emergency_response:
+                            logger.warning(
+                                f"🚨 Emergency response triggered: {divergence['error_type']} "
+                                f"(severity: {emergency_response.severity})"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to generate emergency response: {e}")
             
             # Solve optimization (strategic plan can influence weights)
             result = self.optimizer.solve_optimization(
@@ -176,6 +230,7 @@ class OptimizationAgent(BaseMCPAgent):
                 timeout_seconds=30,
                 strategic_plan=strategic_plan,  # Pass strategic plan to optimizer
                 emergency_response=emergency_response,  # Pass emergency response if divergence detected
+                pump_usage_hours=self.pump_usage_hours,  # Pass usage for fairness/rotation
             )
             
             if not result.success:
@@ -187,7 +242,24 @@ class OptimizationAgent(BaseMCPAgent):
                     timeout_seconds=10,
                     strategic_plan=strategic_plan,
                     emergency_response=emergency_response,  # Pass emergency response to fallback too
+                    pump_usage_hours=self.pump_usage_hours,  # Pass usage for fairness/rotation (unused in rule-based)
                 )
+            
+            # Update cumulative pump usage hours based on final result (first step only)
+            dt_hours = self.optimizer.time_step_minutes / 60.0
+            if result.success and result.schedules:
+                for sched in result.schedules:
+                    if sched.time_step == 0 and sched.is_on:
+                        pid = sched.pump_id
+                        self.pump_usage_hours[pid] = self.pump_usage_hours.get(pid, 0.0) + dt_hours
+            
+            # Store prediction state for next divergence detection
+            if result.success and result.l1_trajectory and len(result.l1_trajectory) > 0:
+                # Store first step prediction (what we expect L1 to be at next optimization)
+                self._previous_prediction = result.l1_trajectory[0]
+                self._previous_forecast_inflow = forecast.inflow_m3_s[0] if len(forecast.inflow_m3_s) > 0 else None
+                self._previous_forecast_price = forecast.price_c_per_kwh[0] if len(forecast.price_c_per_kwh) > 0 else None
+                self._previous_prediction_timestamp = datetime.utcnow()
             
             # Convert to response format
             entries = self._convert_to_entries(result, forecast.timestamps)
