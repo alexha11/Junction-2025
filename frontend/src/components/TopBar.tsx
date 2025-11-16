@@ -36,8 +36,8 @@ const TopBar: FC<Props> = ({ alertsCount, scheduleGeneratedAt }) => {
     <header className="flex flex-col gap-4 rounded-[28px] border border-white/10 bg-brand-surface/80 p-4 shadow-card backdrop-blur">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-hsy to-brand-valmet text-lg font-semibold text-white">
-            HSY
+          <span className="inline-flex h-fit w-fit p-2 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-hsy to-brand-valmet text-lg font-semibold text-white">
+            HSY x Valmet
           </span>
           <div>
             <p className="text-sm uppercase tracking-[0.3em] text-slate-400">
@@ -63,19 +63,6 @@ const TopBar: FC<Props> = ({ alertsCount, scheduleGeneratedAt }) => {
           </div>
         </div>
       </div>
-      <nav className="flex flex-wrap items-center gap-3 text-sm text-slate-200">
-        {navLinks.map((link) => (
-          <a
-            key={link.label}
-            href={link.href}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-white/10 px-4 py-1.5 transition hover:border-brand-accent/40 hover:text-white"
-          >
-            {link.label}
-          </a>
-        ))}
-      </nav>
     </header>
   );
 };

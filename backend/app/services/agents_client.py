@@ -191,26 +191,59 @@ class AgentsCoordinator:
                 )
         
         # Fallback to synthetic data
-        self._logger.debug(
-            "Generating synthetic system state timestamp=%s", now.isoformat()
-        )
-        pumps = [
-            PumpStatus(
-                pump_id=f"P{i+1}",
-                state=PumpState.on if i % 2 == 0 else PumpState.off,
-                frequency_hz=48.0 if i % 2 == 0 else 0.0,
-                power_kw=350.0 if i % 2 == 0 else 0.0,
+        now = datetime.utcnow()
+        self._logger.debug("Generating synthetic system state (fallback)")
+        
+        # Try to get raw state for fallback (if digital twin is available but adapter failed)
+        twin_cur_state = {}
+        try:
+            twin_cur_state = await get_digital_twin_current_state(
+                opcua_url=self._settings.digital_twin_opcua_url
             )
-            for i in range(8)
-        ]
+        except Exception as e:
+            self._logger.debug(f"Could not get raw digital twin state for fallback: {e}")
+
+        self._logger.debug(
+            "Generating synthetic system state timestamp=%s",
+            twin_cur_state.get("SimulationTime", now.isoformat()),
+        )
+
+        pumps = []
+        for station in range(1, 3):  # 1 & 2
+            for pump_num in range(1, 5):  # 1 - 4
+                pumps.append(
+                    PumpStatus(
+                        pump_id=f"{station}.{pump_num}",
+                        state=(
+                            PumpState.on
+                            if twin_cur_state.get(
+                                f"PumpEfficiency.{station}.{pump_num}.kw", 0.0
+                            )
+                            > 0.0
+                            else PumpState.off
+                        ),
+                        frequency_hz=twin_cur_state.get(
+                            f"PumpFrequency.{station}.{pump_num}.hz", 48.0
+                        ),
+                        power_kw=twin_cur_state.get(
+                            f"PumpEfficiency.{station}.{pump_num}.kw", 0.0
+                        ),
+                    )
+                )
+
         return SystemState(
             timestamp=now,
-            tunnel_level_m=3.2,
-            tunnel_level_l2_m=3.0,
-            tunnel_water_volume_l1_m3=1250.0,
-            inflow_m3_s=2.1,
-            outflow_m3_s=2.0,
-            electricity_price_eur_mwh=72.5,
+            tunnel_level_l2_m=twin_cur_state.get("WaterLevelInTunnel.L2.m", 3.2),
+            tunnel_water_volume_l1_m3=twin_cur_state.get(
+                "WaterVolumeInTunnel.L1.m3", 20000.0
+            ),
+            inflow_m3_s=twin_cur_state.get("InflowToTunnel.F1.m3per15min", 1890.0)
+            / 900.0,  # convert to m3/s from m3/15min
+            outflow_m3_s=twin_cur_state.get("SumOfPumpedFlowToWwtp.F2.m3h", 7200.0)
+            / 3600.0,  # convert to m3/s from m3/h
+            electricity_price_eur_mwh=twin_cur_state.get(
+                "ElectricityPrice.2.Normal.ckwh", 6.5
+            ) * 10.0,  # Convert c/kWh to EUR/MWh
             pumps=pumps,
         )
 
@@ -451,13 +484,39 @@ class AgentsCoordinator:
                     for entry in response.entries
                 ]
                 
-                # Store latest result for dashboard
+                # Get full optimization result from optimizer agent (includes l1_trajectory and schedules)
+                # The optimizer agent stores the internal result in a private attribute
+                # We need to access it via a method or store it separately
+                # For now, try to get it from the response if available, or from the agent's internal state
+                l1_trajectory = []
+                schedules = []
+                
+                # Try to access internal optimizer result if available
+                if hasattr(self._optimizer_agent, '_last_optimization_result'):
+                    internal_result = self._optimizer_agent._last_optimization_result
+                    if internal_result:
+                        l1_trajectory = getattr(internal_result, 'l1_trajectory', [])
+                        schedules = [
+                            {
+                                "pump_id": s.pump_id,
+                                "time_step": s.time_step,
+                                "is_on": s.is_on,
+                                "frequency_hz": s.frequency_hz,
+                                "flow_m3_s": s.flow_m3_s,
+                            }
+                            for s in getattr(internal_result, 'schedules', [])
+                        ]
+                
+                # Store latest result for dashboard (including l1_trajectory and schedules for flow simulation)
                 self._latest_optimization_result = {
                     "generated_at": response.generated_at.isoformat(),
                     "total_cost_eur": response.total_cost_eur,
                     "total_energy_kwh": response.total_energy_kwh,
                     "optimization_mode": response.optimization_mode,
                     "horizon_minutes": horizon_minutes,
+                    "l1_trajectory": l1_trajectory,
+                    "schedules": schedules,
+                    "success": True,
                 }
                 
                 return ScheduleRecommendation(
@@ -504,18 +563,116 @@ class AgentsCoordinator:
     ) -> Dict[str, Any]:
         """Trigger optimization and return full result with metrics.
         
+        This method integrates with:
+        - Digital Twin: Gets current system state (L1, inflow, outflow, price, pumps)
+        - Weather Agent: Optimizer uses weather forecast to derive inflow forecast
+        - Price Agent: Optimizer uses price forecast for cost optimization
+        
         Args:
             horizon_minutes: Optimization horizon in minutes
             
         Returns:
             Dictionary with schedule, metrics, and optimization details
         """
-        schedule = await self.get_schedule_recommendation(horizon_minutes=horizon_minutes)
+        from app.services.flow_simulator import flow_simulator
+        from app.services.websocket_manager import websocket_manager
         
+        # 1. GET CURRENT STATE FROM DIGITAL TWIN
+        self._logger.info("🔄 Flow simulation: Getting current state from Digital Twin...")
+        current_state = await self.get_system_state()
+        self._logger.info(
+            f"✅ Digital Twin state: L1={current_state.tunnel_level_m:.3f}m, "
+            f"inflow={current_state.inflow_m3_s:.3f} m³/s, "
+            f"outflow={current_state.outflow_m3_s:.3f} m³/s, "
+            f"price={current_state.electricity_price_eur_mwh:.2f} EUR/MWh"
+        )
+        
+        # Initialize flow simulator if not already initialized
+        if flow_simulator.get_simulated_l1() is None:
+            flow_simulator.initialize(
+                initial_l1_m=current_state.tunnel_level_m,
+                timestamp=current_state.timestamp
+            )
+            self._logger.info(
+                f"🚀 Flow simulator initialized with L1={current_state.tunnel_level_m:.3f}m from Digital Twin"
+            )
+        
+        # 2. GET OPTIMIZATION (which internally communicates with Weather & Price agents)
+        self._logger.info(
+            f"🔄 Flow simulation: Triggering optimization (communicates with Weather & Price agents)..."
+        )
+        schedule = await self.get_schedule_recommendation(horizon_minutes=horizon_minutes)
+        self._logger.info("✅ Optimization complete (used Weather & Price agent forecasts)")
+        
+        # Get optimization result details (includes l1_trajectory if available)
+        optimization_result = self._latest_optimization_result or {}
+        
+        # Update flow simulator with optimization result
+        # Extract schedules and L1 trajectory from optimization result
+        schedules = []
+        l1_trajectory = []
+        
+        # Try to get L1 trajectory and schedules from optimizer response
+        # The optimizer agent stores these in _latest_optimization_result
+        if "l1_trajectory" in optimization_result:
+            l1_trajectory = optimization_result["l1_trajectory"]
+        if "schedules" in optimization_result:
+            schedules = optimization_result["schedules"]
+        
+        # Build optimization result dict for flow simulator
+        opt_result_dict = {
+            "l1_trajectory": l1_trajectory,
+            "schedules": schedules,
+            "success": optimization_result.get("success", True),
+        }
+        
+        # 3. UPDATE FLOW SIMULATOR using data from all agents:
+        #    - Digital Twin: current_inflow, current_outflow, current_L1
+        #    - Weather Agent: inflow forecast (used by optimizer, reflected in L1 trajectory)
+        #    - Price Agent: price forecast (used by optimizer for cost optimization)
+        self._logger.info(
+            f"🔄 Flow simulation: Updating simulated L1 using data from all agents..."
+        )
+        simulated_l1 = flow_simulator.update_from_optimization(
+            current_inflow_m3_s=current_state.inflow_m3_s,  # From Digital Twin
+            current_outflow_m3_s=current_state.outflow_m3_s,  # From Digital Twin
+            optimization_result=opt_result_dict,  # Contains L1 trajectory (based on Weather/Price forecasts)
+            timestamp=current_state.timestamp,
+        )
+        
+        self._logger.info(
+            f"✅ Flow simulation complete: Simulated L1={simulated_l1:.3f}m "
+            f"(based on Digital Twin state + Weather/Price forecasts from optimization)"
+        )
+        
+        # Add simulated L1 to result
         result = {
             "schedule": schedule.model_dump(),
-            "metrics": self._latest_optimization_result or {},
+            "metrics": optimization_result,
+            "simulated_l1_m": simulated_l1,
+            "data_sources": {
+                "digital_twin": True,  # Current state from Digital Twin
+                "weather_agent": True,  # Forecast used by optimizer
+                "price_agent": True,  # Forecast used by optimizer
+            },
         }
+        
+        # 4. BROADCAST SIMULATED STATE VIA WEBSOCKET
+        #    (includes data from all three agents)
+        await websocket_manager.broadcast_system_state({
+            "tunnel_level_m": simulated_l1,  # Simulated using all agents
+            "tunnel_level_l2_m": current_state.tunnel_level_l2_m,  # From Digital Twin
+            "inflow_m3_s": current_state.inflow_m3_s,  # From Digital Twin
+            "outflow_m3_s": current_state.outflow_m3_s,  # From Digital Twin
+            "electricity_price_eur_mwh": current_state.electricity_price_eur_mwh,  # From Digital Twin
+            "pumps": [p.model_dump() for p in current_state.pumps],  # From Digital Twin
+            "simulated": True,  # Flag to indicate this is simulated
+            "data_sources": {
+                "digital_twin": "Current state (L1, inflow, outflow, price, pumps)",
+                "weather_agent": "Weather forecast → inflow forecast → L1 trajectory",
+                "price_agent": "Price forecast → cost optimization → pump schedule",
+            },
+        })
         
         return result
     
@@ -835,3 +992,30 @@ class AgentsCoordinator:
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
+
+    def _resolve_timestamp(self, raw_value) -> datetime:
+        if isinstance(raw_value, datetime):
+            if raw_value.tzinfo is not None:
+                return raw_value.astimezone(timezone.utc).replace(tzinfo=None)
+            return raw_value
+        if isinstance(raw_value, str):
+            try:
+                return self._parse_iso_timestamp(raw_value)
+            except Exception:
+                self._logger.warning(
+                    "Invalid SimulationTime timestamp=%s; defaulting to now", raw_value
+                )
+        if isinstance(raw_value, (int, float)):
+            try:
+                return datetime.fromtimestamp(raw_value, tz=timezone.utc).replace(
+                    tzinfo=None
+                )
+            except Exception:
+                self._logger.warning(
+                    "Failed to convert numeric SimulationTime=%s; defaulting to now",
+                    raw_value,
+                )
+        self._logger.warning(
+            "Digital twin state missing SimulationTime; defaulting to current UTC time"
+        )
+        return datetime.utcnow()

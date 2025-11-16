@@ -1,21 +1,8 @@
 import type { FC } from "react";
-
-interface PumpStatus {
-  pump_id: string;
-  state: string;
-  frequency_hz: number;
-  power_kw: number;
-}
+import { SystemState } from "hooks/system";
 
 interface Props {
-  state?: {
-    tunnel_level_m: number;
-    tunnel_level_l2_m: number;
-    inflow_m3_s: number;
-    outflow_m3_s: number;
-    electricity_price_eur_mwh: number;
-    pumps: PumpStatus[];
-  };
+  state?: SystemState;
   loading: boolean;
 }
 
@@ -50,7 +37,7 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
         </div>
         {!loading && state && (
           <span className="text-xs text-slate-400">
-            {new Date().toLocaleTimeString()}
+            Simulation current time: {state.timestamp}
           </span>
         )}
       </div>
@@ -62,11 +49,11 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
         <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
           <Stat
             label="Tunnel level L2 (m)"
-            value={formatMeters(state.tunnel_level_l2_m)}
+            value={state.tunnel_level_l2_m.toFixed(2)}
           />
           <Stat
-            label="Water volume in tunnel L1"
-            value={formatVolume(tunnelVolumeM3)}
+            label="Water volume in tunnel L1 (m³)"
+            value={formatVolume(state.tunnel_water_volume_l1_m3)}
           />
           <Stat label="Inflow F1 (m³/s)" value={state.inflow_m3_s.toFixed(2)} />
           <Stat
@@ -74,8 +61,8 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
             value={state.outflow_m3_s.toFixed(2)}
           />
           <Stat
-            label="Price (C/kWh)"
-            value={state.electricity_price_eur_mwh.toFixed(1)}
+            label="Price (cents (€)/kWh)"
+            value={state.electricity_price_eur_cents_kwh.toFixed(2)}
           />
         </div>
       )}
@@ -100,10 +87,10 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
                   {pump.state}
                 </td>
                 <td className="px-4 py-2 text-right">
-                  {pump.frequency_hz.toFixed(1)}
+                  {pump.frequency_hz.toFixed(2)}
                 </td>
                 <td className="px-4 py-2 text-right">
-                  {pump.power_kw.toFixed(0)}
+                  {pump.power_kw.toFixed(2)}
                 </td>
               </tr>
             ))}

@@ -3,12 +3,15 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
+  Legend,
   Line,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import type { LegendProps, TooltipProps } from "recharts";
 import type { WeatherPoint } from "../../hooks/useWeatherForecast";
 import { BRAND_COLORS, brandColorWithOpacity } from "../../theme/colors";
 
@@ -19,6 +22,66 @@ interface Props {
   loading: boolean;
   horizonLabel: string;
 }
+
+type FormattedPoint = {
+  timestamp: string;
+  label: string;
+  fullLabel: string;
+  temperature: number;
+  precipitation: number;
+};
+
+const formatTimestamp = (value: string) =>
+  new Date(value).toLocaleString([], {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+const CustomTooltip = ({ active, payload }: TooltipProps<number, string>) => {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  const point = payload[0]?.payload as FormattedPoint | undefined;
+  if (!point) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-3 text-xs text-white shadow-xl">
+      <p className="text-[11px] uppercase tracking-wide text-slate-400">
+        {point.fullLabel}
+      </p>
+      <div className="mt-2 space-y-1.5">
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-2 text-slate-300">
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: BRAND_COLORS.valmet }}
+            />
+            Temperature
+          </span>
+          <span className="font-semibold">
+            {point.temperature.toFixed(1)}°C
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-2 text-slate-300">
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: BRAND_COLORS.accent }}
+            />
+            Precipitation
+          </span>
+          <span className="font-semibold">
+            {point.precipitation.toFixed(1)} mm
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const WeatherForecastCard = ({
   title,
@@ -35,11 +98,12 @@ const WeatherForecastCard = ({
     );
   }
 
-  const formatted = data?.map((point) => ({
+  const formatted: FormattedPoint[] | undefined = data?.map((point) => ({
     timestamp: point.timestamp,
     label: new Date(point.timestamp).toLocaleTimeString([], {
       hour: "2-digit",
     }),
+    fullLabel: formatTimestamp(point.timestamp),
     temperature: Number(point.temperature_c.toFixed(2)),
     precipitation: Number(point.precipitation_mm.toFixed(2)),
   }));
@@ -54,6 +118,28 @@ const WeatherForecastCard = ({
   );
   const precipitationTotal =
     formatted?.reduce((sum, point) => sum + point.precipitation, 0) ?? 0;
+
+  const startPoint = formatted?.[0];
+  const endPoint =
+    formatted && formatted.length > 0
+      ? formatted[formatted.length - 1]
+      : undefined;
+  const timelineStart = startPoint?.fullLabel;
+  const timelineEnd = endPoint?.fullLabel;
+  const legendPayload: LegendProps["payload"] = [
+    {
+      id: "temperature",
+      type: "line",
+      value: "Temperature (°C)",
+      color: BRAND_COLORS.valmet,
+    },
+    {
+      id: "precipitation",
+      type: "rect",
+      value: "Precipitation (mm)",
+      color: BRAND_COLORS.accent,
+    },
+  ];
 
   return (
     <div className="glass-card space-y-4">
@@ -94,6 +180,23 @@ const WeatherForecastCard = ({
               </p>
             </div>
           </div>
+          {timelineStart && timelineEnd && (
+            <div className="rounded-3xl border border-white/5 bg-slate-900/30 px-4 py-2 text-xs text-slate-300">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">
+                    Forecast Start
+                  </p>
+                </div>
+                <div className="h-8 w-px bg-white/10" />
+                <div className="text-right">
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500">
+                    Forecast End
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={formatted} margin={{ left: 12, right: 12 }}>
@@ -121,6 +224,13 @@ const WeatherForecastCard = ({
                   stroke={BRAND_COLORS.gridMuted}
                   strokeDasharray="3 3"
                 />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  wrapperStyle={{ paddingBottom: 8 }}
+                  payload={legendPayload}
+                  iconSize={10}
+                />
                 <XAxis
                   dataKey="label"
                   tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
@@ -133,6 +243,13 @@ const WeatherForecastCard = ({
                   tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
+                  label={{
+                    value: "°C",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: BRAND_COLORS.textMuted,
+                    fontSize: 11,
+                  }}
                 />
                 <YAxis
                   yAxisId="precipitation"
@@ -140,18 +257,35 @@ const WeatherForecastCard = ({
                   tick={{ fill: BRAND_COLORS.textMuted, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: BRAND_COLORS.surfaceAlt,
-                    borderRadius: 16,
-                    border: `1px solid ${brandColorWithOpacity(
-                      "accent",
-                      0.25
-                    )}`,
-                    color: "white",
+                  label={{
+                    value: "mm",
+                    angle: 90,
+                    position: "insideRight",
+                    fill: BRAND_COLORS.textMuted,
+                    fontSize: 11,
                   }}
                 />
+                <Tooltip
+                  content={<CustomTooltip />}
+                  cursor={{
+                    stroke: brandColorWithOpacity("gridStrong", 0.35),
+                    strokeWidth: 1,
+                  }}
+                />
+                {startPoint?.label && (
+                  <ReferenceLine
+                    x={startPoint.label}
+                    yAxisId="temperature"
+                    stroke={brandColorWithOpacity("gridStrong", 0.75)}
+                    strokeDasharray="6 6"
+                    label={{
+                      value: "Now",
+                      position: "insideTop",
+                      fill: BRAND_COLORS.textMuted,
+                      fontSize: 11,
+                    }}
+                  />
+                )}
                 <Bar
                   yAxisId="precipitation"
                   dataKey="precipitation"

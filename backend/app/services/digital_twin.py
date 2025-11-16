@@ -1,6 +1,7 @@
 """Digital Twin Service - Interface to OPC UA server and MCP server."""
 
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -12,6 +13,7 @@ from app.services.digital_twin_adapter import DigitalTwinAdapter
 logger = logging.getLogger(__name__)
 
 DEFAULT_OPCUA_SERVER_URL = "opc.tcp://localhost:4840/wastewater/"
+OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
 DEFAULT_MCP_SERVER_URL = "http://localhost:8080"
 
 
