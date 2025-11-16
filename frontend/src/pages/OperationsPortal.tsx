@@ -366,6 +366,29 @@ const OperationsPortal = () => {
     }
   }, [schedule?.strategy, state?.pumps]);
 
+  // Manual play audio handler
+  const handlePlayAudio = async () => {
+    const explanation = schedule?.justification;
+    const strategy = schedule?.strategy;
+    
+    if (!explanation && !strategy) {
+      console.log("No content to play");
+      return;
+    }
+    
+    // Play explanation first if available
+    if (explanation && explanation !== "Optimized pump schedule based on current conditions.") {
+      await safePlayText(`Explanation: ${explanation}`);
+      // Small delay between messages
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    // Then play strategy if available
+    if (strategy) {
+      await safePlayText(`Strategy: ${strategy}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <TopBar
@@ -427,7 +450,7 @@ const OperationsPortal = () => {
           <ForecastPanel inflow={inflow} prices={price} />
         </div>
         <div className="space-y-6">
-          <RecommendationPanel schedule={schedule} loading={false} />
+          <RecommendationPanel schedule={schedule} loading={false} onPlayAudio={handlePlayAudio} />
           <AlertsBanner alerts={alerts} />
           <OverridePanel />
           <DeliveryChecklist />
