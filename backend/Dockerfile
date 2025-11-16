@@ -14,15 +14,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
     curl \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv ${VENV_PATH}
 ENV PATH="${VENV_PATH}/bin:${PATH}"
 
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org
 
 COPY backend/requirements.txt backend/pyproject.toml ./backend/
-RUN pip install -r backend/requirements.txt
+RUN pip install -r backend/requirements.txt \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org
 
 COPY backend ./backend
 COPY sample ./sample

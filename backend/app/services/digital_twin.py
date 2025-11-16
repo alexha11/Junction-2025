@@ -1,7 +1,9 @@
+import os
 from datetime import datetime
 from opcua import Client
 
 DEFAULT_OPCUA_SERVER_URL = "opc.tcp://localhost:4840/wastewater/"
+OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
 
 
 async def get_digital_twin_current_state(self):
@@ -11,7 +13,7 @@ async def get_digital_twin_current_state(self):
             "Fetching current digital twin synthetic system state", now.isoformat()
         )
 
-        client = Client(DEFAULT_OPCUA_SERVER_URL)
+        client = Client(OPCUA_SERVER_URL)
         client.connect()
 
         # Read all pump station variables
