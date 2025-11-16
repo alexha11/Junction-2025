@@ -1,7 +1,7 @@
 from opcua import Client
 import time
 
-client = Client("opc.tcp://135.125.143.85:4840/wastewater/")
+client = Client("opc.tcp://opcua.flowoptimization.app:4840/wastewater/")
 try:
     client.connect()
     print("Connected")

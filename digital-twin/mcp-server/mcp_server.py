@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 from opcua import Client
 
-DEFAULT_OPCUA_SERVER_URL = "opc.tcp://135.125.143.85:4840/wastewater/"
+DEFAULT_OPCUA_SERVER_URL = "opc.tcp://opcua.flowoptimization.app:4840/wastewater/"
 OPCUA_SERVER_URL = os.environ.get("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
 
 NAME = "demo-digital-twin-mcp-server"

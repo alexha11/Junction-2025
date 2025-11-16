@@ -19,6 +19,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV MCP_SERVER_PORT=8080
+ENV OPCUA_SERVER_URL="opc.tcp://opcua.flowoptimization.app:4840/wastewater/"
 
 # Ignored in docker-compose.yml
 CMD ["python", "mcp_server.py"]
