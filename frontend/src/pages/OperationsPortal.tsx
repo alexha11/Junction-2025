@@ -1,7 +1,7 @@
+import { useEffect } from "react";
 import AlertsBanner from "../components/AlertsBanner";
 import DeliveryChecklist from "../components/DeliveryChecklist";
 import ForecastPanel from "../components/ForecastPanel";
-import HeroHeader from "../components/HeroHeader";
 import OverridePanel from "../components/OverridePanel";
 import ProjectContextPanel from "../components/ProjectContextPanel";
 import ProjectRoadmap from "../components/ProjectRoadmap";
@@ -19,6 +19,7 @@ import {
   type SystemState,
 } from "../hooks/system";
 import { useWeatherForecast } from "../hooks/useWeatherForecast";
+import { playText } from "../../utils/elevenlabs.mjs";
 
 const fallbackState: SystemState = {
   timestamp: new Date().toISOString(),
@@ -120,6 +121,11 @@ const OperationsPortal = () => {
   const longTermLow = minTemperature(longTerm.data);
   const timeline = (longTerm.data ?? shortTerm.data ?? []).slice(0, 12);
 
+	useEffect(() => {
+		playText('Welcome to the Operations Cockpit. All systems are functioning within normal parameters.', 'JBFqnCBsd6RMkjVDRZzb');
+	}	
+, []);
+
   return (
     <div className="space-y-6">
       <TopBar
@@ -128,11 +134,6 @@ const OperationsPortal = () => {
           scheduleData?.generated_at ?? schedule.generated_at
         }
       />
-      {/* <HeroHeader
-        state={state}
-        schedule={scheduleData ?? schedule}
-        alertsCount={alerts.length}
-      /> */}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-6">

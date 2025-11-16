@@ -158,7 +158,15 @@ class AgentsCoordinator:
 
     async def get_forecasts(self) -> List[ForecastSeries]:
         """Generate a 24-hour forecast from now using LinearModel."""
-        now = datetime.utcnow()
+        # Fetch current digital twin state
+        twin_cur_state = await self.get_digital_twin_current_state()
+
+        # Get the current simulation time, fallback to UTC now if missing
+        now = twin_cur_state.get("SimulationTime", datetime.utcnow())
+        if isinstance(now, str):
+            # Parse ISO string if returned as string
+            now = datetime.fromisoformat(now.replace("Z", "+00:00"))
+
         horizon = 24
         self._logger.info("Building forecast bundle horizon_hours=%s", horizon)
 

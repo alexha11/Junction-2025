@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.logging_config import configure_logging
 from app.services.agents_client import AgentsCoordinator
 from app.services.scheduler import OptimizationScheduler
+from fastapi.middleware.cors import CORSMiddleware
 
 _agents = AgentsCoordinator()
 _scheduler: OptimizationScheduler | None = None
@@ -43,6 +44,14 @@ def create_app() -> FastAPI:
         settings.api_version,
     )
     application = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=lifespan)
+
+    application.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
     application.include_router(system.router)
     application.include_router(system.weather_router)
     application.include_router(alerts.router)
