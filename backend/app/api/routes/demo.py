@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Optional, Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Body, UploadFile, File
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import shutil
 
