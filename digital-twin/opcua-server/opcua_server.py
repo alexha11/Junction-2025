@@ -2,8 +2,13 @@ import os
 import time
 import sqlite3
 from typing import Dict, cast
+from threading import Thread
+import pathlib
 
 import pandas as pd
+import uvicorn
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
 from opcua import Server, ua, Node
 
 from parse_historical_data import PARQUET_DATA_FILE_PATH
@@ -26,6 +31,21 @@ class HistoricalData:
             self.current_idx += 1
             return self.hist_df.iloc[self.current_idx]
         return None
+
+    def reload_history(self, file_path: str) -> None:
+        """
+        Replace the current historical dataset with a new parquet file.
+        Assumes the new file has compatible columns. Does not recreate
+        OPC nodes — this keeps node IDs stable. If columns change you
+        should extend this to recreate variables.
+        """
+        if not pathlib.Path(file_path).exists():
+            raise FileNotFoundError(file_path)
+        self.hist_data = HistoricalData(file_path)
+        # reset simulation time shown in server
+        if self.simulation_time:
+            self.simulation_time.set_value(str(pd.Timestamp.now()))
+        print(f"Reloaded history from {file_path}")
 
 
 class WastewaterOPCUAServer:
@@ -193,12 +213,92 @@ class SimulationController:
             print("Simulation stopped by user")
 
 
+def start_control_api(opc_server: WastewaterOPCUAServer, host="0.0.0.0", port=8000):
+    app = FastAPI()
+
+    @app.post("/reload-history")
+    async def reload_history(
+        file: UploadFile | None = File(None), filename: str | None = None
+    ):
+        # Ensure a single sandboxed data directory
+        data_dir = pathlib.Path("./data")
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        # allow only safe filenames (alphanum, dot, underscore, hyphen)
+        SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+        # helper to validate a name stays inside data_dir
+        def _safe_target(name: str) -> pathlib.Path | None:
+            if not name:
+                return None
+            # strip any directory components
+            name = pathlib.Path(name).name
+            if not SAFE_NAME_RE.fullmatch(name):
+                return None
+            target = data_dir / name
+            try:
+                # ensure resolved parent is exactly data_dir (prevents traversal)
+                if target.resolve().parent != data_dir.resolve():
+                    return None
+            except Exception:
+                return None
+            return target
+
+        # Uploaded file case
+        if file is not None:
+            raw_name = getattr(file, "filename", "") or ""
+            target = _safe_target(raw_name)
+            if target is None:
+                return JSONResponse(
+                    {"ok": False, "error": "invalid or unsafe filename"},
+                    status_code=400,
+                )
+            content = await file.read()
+            target.write_bytes(content)
+            try:
+                opc_server.hist_data.reload_history(str(target))
+            except Exception as e:
+                return JSONResponse(
+                    {"ok": False, "error": f"Unable to reload history: {e}"},
+                    status_code=500,
+                )
+            return {"ok": True, "path": str(target)}
+
+        # Named file already present in ./data
+        if filename:
+            target = _safe_target(filename)
+            if target is None:
+                return JSONResponse(
+                    {"ok": False, "error": "invalid or unsafe filename"},
+                    status_code=400,
+                )
+            if not target.exists():
+                return JSONResponse(
+                    {"ok": False, "error": "file not found in data directory"},
+                    status_code=404,
+                )
+            try:
+                opc_server.hist_data.reload_history(str(target))
+            except Exception as e:
+                return JSONResponse(
+                    {"ok": False, "error": f"Unable to reload history: {e}"},
+                    status_code=500,
+                )
+            return {"ok": True, "path": str(target)}
+
+        return JSONResponse(
+            {"ok": False, "error": "no file or filename provided"}, status_code=400
+        )
+
+
 def main():
     opc_server = WastewaterOPCUAServer()
     simulation_controller = SimulationController(opc_server.hist_data, speedup=SPEEDUP)
 
     opc_server.create_all_variables()
     opc_server.start()
+
+    start_control_api(opc_server)
 
     try:
         simulation_controller.run_simulation(opc_server)
