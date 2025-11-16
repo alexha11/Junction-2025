@@ -2,6 +2,7 @@ import type { FC } from "react";
 import { SystemState } from "../hooks/system";
 import useAnimatedNumber from "../hooks/useAnimatedNumber";
 import System3DScene from "./System3DScene";
+import { isBoosterPump } from "../constants/pumps";
 
 interface Props {
   state?: SystemState;
@@ -118,7 +119,12 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
                       pump.state
                     )}`}
                   />
-                  {pump.pump_id}
+                  <span className="align-middle">{pump.pump_id}</span>
+                  {isBoosterPump(pump.pump_id) && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                      Booster
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2 capitalize text-slate-300">
                   {pump.state}

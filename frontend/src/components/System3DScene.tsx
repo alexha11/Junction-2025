@@ -1,5 +1,6 @@
 import {
   Float,
+  Grid,
   Html,
   OrbitControls,
   QuadraticBezierLine,
@@ -10,6 +11,7 @@ import type { FC } from "react";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import type { PumpStatus } from "../hooks/system";
+import { isBoosterPump } from "../constants/pumps";
 
 interface PumpVisual {
   id: string;
@@ -19,6 +21,7 @@ interface PumpVisual {
   health: PumpHealth;
   color: string;
   accent: string;
+  size: PumpSize;
 }
 
 interface WastewaterUnitVisual {
@@ -37,6 +40,8 @@ interface System3DSceneProps {
 }
 
 type PumpHealth = "active" | "idle" | "fault";
+type PumpSize = "small" | "large";
+const BOOSTER_ACCENT = "#fbbf24";
 
 const classifyState = (state?: string): PumpHealth => {
   if (!state) return "idle";
@@ -73,6 +78,9 @@ const clamp01 = (value?: number) => {
 
 const getNow = () =>
   typeof performance !== "undefined" ? performance.now() : Date.now();
+
+const getPumpSize = (id?: string): PumpSize =>
+  isBoosterPump(id) ? "small" : "large";
 interface PumpNodeProps {
   pump: PumpVisual;
   position: [number, number, number];
@@ -107,10 +115,14 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
     );
   });
 
+  const radius = pump.size === "small" ? 0.26 : 0.35;
+  const towerHeight = pump.size === "small" ? 0.9 : 1.25;
+  const beaconSize = pump.size === "small" ? 0.14 : 0.18;
+
   return (
     <group position={position}>
       <mesh position={[0, -0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.45, 0.75, 48]} />
+        <ringGeometry args={[radius + 0.1, radius + 0.45, 48]} />
         <meshStandardMaterial
           color={pump.accent}
           emissive={pump.accent}
@@ -120,11 +132,22 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
         />
       </mesh>
       <mesh position={[0, -0.15, 0]}>
-        <cylinderGeometry args={[0.4, 0.4, 0.2, 24]} />
+        <cylinderGeometry args={[radius + 0.08, radius + 0.08, 0.2, 24]} />
         <meshStandardMaterial color="#0f172a" roughness={0.6} metalness={0.1} />
       </mesh>
-      <mesh ref={columnRef} position={[0, 0.6, 0]} castShadow>
-        <cylinderGeometry args={[0.32, 0.32, 1.2, 24]} />
+      <mesh ref={columnRef} position={[0, towerHeight / 2, 0]} castShadow>
+        <cylinderGeometry args={[radius, radius, towerHeight, 32]} />
+        {pump.size === "small" && (
+          <mesh position={[0, towerHeight * 0.4, 0]} castShadow>
+            <torusGeometry args={[radius + 0.05, 0.04, 12, 48]} />
+            <meshStandardMaterial
+              color={BOOSTER_ACCENT}
+              emissive={BOOSTER_ACCENT}
+              emissiveIntensity={0.6}
+              metalness={0.3}
+            />
+          </mesh>
+        )}
         <meshStandardMaterial
           color={pump.color}
           emissive={pump.health === "active" ? pump.color : "#0f172a"}
@@ -133,8 +156,8 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
           metalness={0.3}
         />
       </mesh>
-      <mesh ref={beaconRef} position={[0, 1.4, 0]}>
-        <sphereGeometry args={[0.18, 16, 16]} />
+      <mesh ref={beaconRef} position={[0, towerHeight + 0.35, 0]}>
+        <sphereGeometry args={[beaconSize, 16, 16]} />
         <meshBasicMaterial color={pump.accent} opacity={0.5} transparent />
       </mesh>
       <Html center distanceFactor={18} position={[0, 1.8, 0]}>
@@ -254,6 +277,26 @@ const FlowBridge: FC<{
 const formatFlow = (value?: number) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "--";
 
+const LegendPill = ({
+  color,
+  label,
+  textClass = "text-slate-200",
+}: {
+  color: string;
+  label: string;
+  textClass?: string;
+}) => (
+  <span
+    className={`flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide ${textClass}`}
+  >
+    <span
+      className="h-2.5 w-2.5 rounded-full"
+      style={{ backgroundColor: color }}
+    />
+    {label}
+  </span>
+);
+
 const directionLabel = (label: string, value?: number) => (
   <div className="flex items-center gap-1 rounded-full border border-white/10 bg-slate-900/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-100">
     <span>{label}</span>
@@ -281,6 +324,7 @@ const System3DScene: FC<System3DSceneProps> = ({
         health,
         color: pumpPalette[health],
         accent: pumpAccentPalette[health],
+        size: getPumpSize(source?.pump_id),
       };
     });
   }, [pumps]);
@@ -320,6 +364,16 @@ const System3DScene: FC<System3DSceneProps> = ({
   const faultCount = pumpVisuals.filter(
     (pump) => pump.health === "fault"
   ).length;
+  const boosterCount = pumpVisuals.filter(
+    (pump) => pump.size === "small"
+  ).length;
+  const boosterActive = pumpVisuals.filter(
+    (pump) => pump.size === "small" && pump.health === "active"
+  ).length;
+  const primaryTotal = Math.max(pumpVisuals.length - boosterCount, 0);
+  const primaryActive = Math.max(activeCount - boosterActive, 0);
+  const normalizedFill = clamp01(tunnelFillRatio ?? 0);
+  const tunnelFillPercent = Math.round(normalizedFill * 100);
 
   const flowStart: [number, number, number] = [-5.8, 0.15, 0];
   const flowEnd: [number, number, number] = [5.8, 0.15, 0];
@@ -343,6 +397,20 @@ const System3DScene: FC<System3DSceneProps> = ({
           penumbra={0.35}
         />
         <group position={[0, -0.2, 0]} rotation={[0, 0, 0]}>
+          <Grid
+            args={[20, 20]}
+            position={[0, -0.5, 0]}
+            cellSize={0.75}
+            cellThickness={0.4}
+            sectionSize={3}
+            sectionThickness={0.8}
+            fadeDistance={14}
+            fadeStrength={1.5}
+            infiniteGrid
+            followCamera={false}
+            sectionColor="#0f172a"
+            cellColor="#1d2538"
+          />
           <ChannelBase length={13} width={1.6} />
           <TunnelWater
             ratio={tunnelFillRatio ?? 0.45}
@@ -374,13 +442,16 @@ const System3DScene: FC<System3DSceneProps> = ({
                 ? pos[2] - connectorLength / 2
                 : pos[2] + connectorLength / 2,
             ];
+            const connectorColor =
+              pump.size === "small" ? BOOSTER_ACCENT : pump.accent;
+            const connectorOpacity = pump.size === "small" ? 0.65 : 0.35;
             return (
               <group key={pump.id}>
                 <mesh position={connectorPosition}>
                   <boxGeometry args={[0.12, 0.1, connectorLength]} />
                   <meshStandardMaterial
-                    color={pump.accent}
-                    opacity={0.4}
+                    color={connectorColor}
+                    opacity={connectorOpacity}
                     transparent
                   />
                 </mesh>
@@ -426,23 +497,47 @@ const System3DScene: FC<System3DSceneProps> = ({
         </group>
         <OrbitControls enablePan={false} maxPolarAngle={Math.PI / 2.2} />
       </Canvas>
-      <div className="pointer-events-none absolute left-4 top-4 flex flex-wrap gap-3 text-[11px] font-semibold uppercase tracking-wide text-slate-200">
-        <span className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-[#22d3ee]" /> Active
+      <div className="pointer-events-none absolute left-4 top-4 flex flex-col gap-2">
+        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+          Legend
         </span>
-        <span className="flex items-center gap-2 text-slate-400">
-          <span className="h-2 w-2 rounded-full bg-[#475569]" /> Standby
-        </span>
-        <span className="flex items-center gap-2 text-rose-200">
-          <span className="h-2 w-2 rounded-full bg-[#fb7185]" /> Fault
-        </span>
-        <span className="flex items-center gap-2 text-blue-200">
-          <span className="h-2 w-2 rounded-full bg-[#a5b4fc]" /> Wastewater
-        </span>
+        <div className="flex flex-wrap gap-2">
+          <LegendPill color="#22d3ee" label="Active" />
+          <LegendPill
+            color="#475569"
+            label="Standby"
+            textClass="text-slate-400"
+          />
+          <LegendPill color="#fb7185" label="Fault" textClass="text-rose-100" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <LegendPill color="#1f8ef1" label="Primary pump" />
+          <LegendPill
+            color={BOOSTER_ACCENT}
+            label="Booster P1.1 / P2.1"
+            textClass="text-amber-100"
+          />
+          <LegendPill
+            color="#a5b4fc"
+            label="Wastewater unit"
+            textClass="text-blue-100"
+          />
+        </div>
       </div>
-      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-col gap-1 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-xs font-semibold text-white">
-        <span className="text-sm">Active pumps: {activeCount}/8</span>
-        <span className="text-slate-300">Faults detected: {faultCount}</span>
+      <div className="pointer-events-none absolute bottom-4 left-4 flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-3 text-xs font-semibold text-white min-w-[230px]">
+        <div className="flex items-center justify-between text-sm">
+          <span>Primary pumps</span>
+          <span className="text-sky-200">
+            {primaryTotal ? `${primaryActive}/${primaryTotal} active` : "—"}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span>Booster pumps</span>
+          <span className="text-amber-200">
+            {boosterCount ? `${boosterActive}/${boosterCount}` : "—"}
+          </span>
+        </div>
+        <span className="text-slate-400">Faults detected: {faultCount}</span>
       </div>
       <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col gap-2 text-[11px] font-semibold uppercase tracking-wide text-white">
         {directionLabel("Inflow", inflow)}
