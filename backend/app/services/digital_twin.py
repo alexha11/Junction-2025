@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from opcua import Client
 
-DEFAULT_OPCUA_SERVER_URL = "opc.tcp://localhost:4840/wastewater/"
+DEFAULT_OPCUA_SERVER_URL = "opc.tcp://135.125.143.85:4840/wastewater/"
 OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
 
 
