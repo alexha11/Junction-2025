@@ -2,10 +2,10 @@
 
 End-to-end platform for optimizing HSY Blominmäki wastewater pumping using multi-agent forecasts, a FastAPI orchestration backend, a React operator dashboard, and supporting digital-twin tooling.
 
-## Table of Contents
+## 📚 Table of Contents
 
 - [HSY Blominmäki AI Agent Pumping Optimization System](#hsy-blominmäki-ai-agent-pumping-optimization-system)
-  - [Table of Contents](#table-of-contents)
+  - [📚 Table of Contents](#-table-of-contents)
   - [🚀 Features](#-features)
   - [🛠️ Technology Stack](#%EF%B8%8F-technology-stack)
   - [📦 Installation & Setup](#-installation--setup)
@@ -21,12 +21,12 @@ End-to-end platform for optimizing HSY Blominmäki wastewater pumping using mult
   - [🔧 Troubleshooting](#-troubleshooting)
   - [📝 Notes](#-notes)
   - [🤝 Contributing](#-contributing)
-  - [Configuration & Secrets](#configuration--secrets)
-    - [Sample `.env`](#sample-env)
-  - [Data, Models & Digital Twin](#data-models--digital-twin)
-  - [Testing & QA](#testing--qa)
-  - [Documentation Map](#documentation-map)
-  - [Roadmap](#roadmap)
+  - [🔐 Configuration & Secrets](#-configuration--secrets)
+    - [🧾 Sample `.env`](#-sample-env)
+  - [🧬 Data, Models & Digital Twin](#-data-models--digital-twin)
+  - [🧪 Testing & QA](#-testing--qa)
+  - [🗂️ Documentation Map](#%EF%B8%8F-documentation-map)
+  - [🧭 Roadmap](#-roadmap)
 
 ## 🚀 Features
 
@@ -229,7 +229,7 @@ docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weat
 - Run relevant unit tests (`pytest`, `npm run test`) plus linting before opening a PR.
 - Update documentation (`docs/*.md`, this README) whenever APIs, env vars, or workflows change.
 
-## Configuration & Secrets
+## 🔐 Configuration & Secrets
 
 | Variable                     | Default                                                     | Description                                                                                |
 | ---------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -244,7 +244,7 @@ docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weat
 
 Backends read from `backend/.env` (handled by `pydantic-settings`). Agents can either use `.env` or exported variables. Frontend expects a `.env.local` with `VITE_*` keys.
 
-### Sample `.env`
+### 🧾 Sample `.env`
 
 ```
 # backend/.env
@@ -267,21 +267,21 @@ VITE_WEATHER_AGENT_URL=http://localhost:8000/weather/forecast
 MCP_SERVER_PORT=8080
 ```
 
-## Data, Models & Digital Twin
+## 🧬 Data, Models & Digital Twin
 
 - `digital-twin/opcua-server/parse_historical_data.py` ingests HSY-provided CSVs (`digital-twin/opcua-server/data/*.txt`) into Parquet for fast replay.
 - `digital-twin/opcua-server/opcua_server.py` streams rows through a namespace of pump variables while `digital-twin/mcp-server/mcp_server.py` exposes browse/read/write/history/aggregate tools over SSE for MCP clients.
 - `sample/` contains JSON fallbacks (`weather_fallback.json`, `market_price_fallback.json`) and Valmet metadata for demos without live integrations.
 - `spot-price-forecast/` bundles notebooks (`notebooks/`), scripts (`script/main.py`), and trained model metadata (`models/consumption_forecast_model_info.json`) to bootstrap price forecasting research. Requires `FINGRID_API_KEY` as described in its README.
 
-## Testing & QA
+## 🧪 Testing & QA
 
 - Backend: `pytest -q` (see `docs/TESTING.md` for coverage goals, scheduler tests, async fixtures).
 - Agents: add suites under `agents/tests/` exercising tool contracts (example patterns in `docs/TESTING.md`).
 - Frontend: configure Vitest/RTL for component coverage plus Playwright for E2E once endpoints stabilize.
 - Digital twin: use `digital-twin/test-clients/run.sh` to verify MCP and OPC UA endpoints prior to hooking them into the backend scheduler.
 
-## Documentation Map
+## 🗂️ Documentation Map
 
 - `docs/PRD.md` – product requirements, KPIs, and success metrics.
 - `docs/AGENT.md` – per-agent responsibilities, schemas, and TODOs.
@@ -291,7 +291,7 @@ MCP_SERVER_PORT=8080
 - `docs/CURL.md` – curated smoke-test commands for every public API.
 - `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
 
-## Roadmap
+## 🧭 Roadmap
 
 1. Replace deterministic agent stubs with live FMI, Nord Pool, simulator, and optimization solvers (Pyomo/OR-Tools).
 2. Persist schedules, overrides, and alert history in Postgres and expose WebSocket streams for real-time dashboards.
