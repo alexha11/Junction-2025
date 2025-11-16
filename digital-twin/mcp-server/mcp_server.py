@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP
 from opcua import Client
 
-DEFAULT_OPCUA_SERVER_URL = "opc.tcp://localhost:4840/wastewater/"
+DEFAULT_OPCUA_SERVER_URL = "opc.tcp://135.125.143.85:4840/wastewater/"
+OPCUA_SERVER_URL = os.environ.get("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
 
 NAME = "demo-digital-twin-mcp-server"
 logging.basicConfig(
@@ -22,11 +23,9 @@ mcp = FastMCP(NAME, log_level="INFO", port=port, host="0.0.0.0")
 
 
 @mcp.tool()
-def browse_opcua_variables(
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
-) -> list[str]:
+def browse_opcua_variables() -> list[str]:
     try:
-        client = Client(opcua_url)
+        client = Client(OPCUA_SERVER_URL)
         client.connect()
 
         # Browse pump station variables
@@ -50,10 +49,9 @@ def browse_opcua_variables(
 @mcp.tool()
 def read_opcua_variable(
     variable_name: str,
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
 ) -> str:
     try:
-        client = Client(opcua_url)
+        client = Client(OPCUA_SERVER_URL)
         client.connect()
 
         objects = client.get_objects_node()
@@ -77,10 +75,9 @@ def read_opcua_variable(
 def write_opcua_variable(
     variable_name: str,
     value: float,
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
 ) -> bool:
     try:
-        client = Client(opcua_url)
+        client = Client(OPCUA_SERVER_URL)
         client.connect()
 
         objects = client.get_objects_node()
@@ -104,10 +101,9 @@ def write_opcua_variable(
 def get_variable_history(
     variable_name: str,
     hours_back: int = 24,
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
 ) -> List[Dict[str, Union[str, float]]]:
     try:
-        client = Client(opcua_url)
+        client = Client(OPCUA_SERVER_URL)
         client.connect()
 
         objects = client.get_objects_node()
@@ -156,10 +152,9 @@ def get_variable_history(
 def aggregate_variable_data(
     variable_name: str,
     hours_back: int = 24,
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
 ) -> Dict[str, Union[str, float, int]]:
     try:
-        history_data = get_variable_history(variable_name, hours_back, opcua_url)
+        history_data = get_variable_history(variable_name, hours_back)
 
         if not history_data:
             return {
@@ -202,13 +197,12 @@ def aggregate_variable_data(
 def aggregate_multiple_variables_data(
     variable_names: List[str],
     hours_back: int = 24,
-    opcua_url: str = DEFAULT_OPCUA_SERVER_URL,
 ) -> List[Dict[str, Union[str, float, int]]]:
     results = []
 
     for var_name in variable_names:
         try:
-            aggregation = aggregate_variable_data(var_name, hours_back, opcua_url)
+            aggregation = aggregate_variable_data(var_name, hours_back)
             results.append(aggregation)
         except Exception:
             results.append(
