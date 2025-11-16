@@ -418,6 +418,7 @@ OPCUA_PORT=4840
 - `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
 - `DEPLOYMENT.md` – single-source guide for running the entire platform with `docker-compose.full.yml`.
 - `deploy/docker/README.md` – infrastructure-focused supplement (ports, scaling, production overrides).
+- `docs/RELEASE_NOTES.md` – snapshot of the latest release (scope, highlights, validation, known issues).
 
 ## 🧭 Roadmap
 
