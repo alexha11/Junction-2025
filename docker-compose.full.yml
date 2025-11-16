@@ -1,0 +1,242 @@
+# Docker Compose configuration for full platform deployment
+# Includes: Backend, Frontend, All Agents, Digital Twin
+name: hsy-platform-full
+
+services:
+  # ==================== Backend Service ====================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: hsy-backend:latest
+    container_name: hsy-backend
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OPTIMIZER_INTERVAL_MINUTES: ${OPTIMIZER_INTERVAL_MINUTES:-15}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/hsy}
+      # Agent URLs (internal Docker network)
+      WEATHER_AGENT_URL: ${WEATHER_AGENT_URL:-http://weather-agent:8101}
+      PRICE_AGENT_URL: ${PRICE_AGENT_URL:-http://price-agent:8102}
+      OPTIMIZER_AGENT_URL: ${OPTIMIZER_AGENT_URL:-http://optimizer-agent:8105}
+      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
+      # Optional: LLM/Featherless API for explanations
+      FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
+      FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/workspace/backend
+      - ./sample:/workspace/sample
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/system/state || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      - postgres
+      - weather-agent
+      - price-agent
+      - optimizer-agent
+      - opcua-server
+    networks:
+      - hsy-network
+
+  # ==================== Frontend Service ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_WEATHER_AGENT_URL: ${VITE_WEATHER_AGENT_URL:-http://backend:8000/weather/forecast}
+    image: hsy-frontend:latest
+    container_name: hsy-frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - hsy-network
+
+  # ==================== Agent Services ====================
+  
+  # Weather Agent
+  weather-agent:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    image: hsy-weather-agent:latest
+    container_name: hsy-weather-agent
+    environment:
+      AGENT_PORT: ${WEATHER_AGENT_PORT:-8101}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
+      USE_OPENWEATHER: ${USE_OPENWEATHER:-false}
+    command: ["python", "-m", "agents.weather_agent.server"]
+    ports:
+      - "${WEATHER_AGENT_PORT:-8101}:8101"
+    volumes:
+      - ./agents/weather_agent:/workspace/agents/weather_agent
+      - ./sample:/workspace/sample
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8101/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - hsy-network
+
+  # Price Agent
+  price-agent:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    image: hsy-price-agent:latest
+    container_name: hsy-price-agent
+    environment:
+      AGENT_PORT: ${PRICE_AGENT_PORT:-8102}
+      USE_NORD_POOL: ${USE_NORD_POOL:-false}
+    command: ["python", "-m", "agents.price_agent.server"]
+    ports:
+      - "${PRICE_AGENT_PORT:-8102}:8102"
+    volumes:
+      - ./agents/price_agent:/workspace/agents/price_agent
+      - ./sample:/workspace/sample
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8102/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - hsy-network
+
+  # Optimizer Agent
+  optimizer-agent:
+    build:
+      context: .
+      dockerfile: agents/Dockerfile
+    image: hsy-optimizer-agent:latest
+    container_name: hsy-optimizer-agent
+    environment:
+      AGENT_PORT: ${OPTIMIZER_AGENT_PORT:-8105}
+      BACKEND_URL: ${OPTIMIZER_BACKEND_URL:-http://backend:8000}
+      WEATHER_AGENT_URL: ${OPTIMIZER_WEATHER_AGENT_URL:-http://weather-agent:8101}
+      PRICE_AGENT_URL: ${OPTIMIZER_PRICE_AGENT_URL:-http://price-agent:8102}
+      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-http://mcp-server:8080}
+      FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
+      FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instruct}
+    command: ["python", "-m", "agents.optimizer_agent.server"]
+    ports:
+      - "${OPTIMIZER_AGENT_PORT:-8105}:8105"
+    volumes:
+      - ./agents/optimizer_agent:/workspace/agents/optimizer_agent
+      - ./sample:/workspace/sample
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8105/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - weather-agent
+      - price-agent
+      - backend
+      - mcp-server
+    networks:
+      - hsy-network
+
+  # ==================== Digital Twin Services ====================
+  
+  # OPC UA Server
+  opcua-server:
+    build:
+      context: ./digital-twin/opcua-server
+      dockerfile: Dockerfile
+    image: hsy-opcua-server:latest
+    container_name: hsy-opcua-server
+    ports:
+      - "${OPCUA_PORT:-4840}:4840"
+    volumes:
+      - ./digital-twin/opcua-server/data:/app/data
+    restart: unless-stopped
+    networks:
+      - hsy-network
+
+  # MCP Server (Digital Twin Bridge)
+  mcp-server:
+    build:
+      context: ./digital-twin/mcp-server
+      dockerfile: Dockerfile
+    image: hsy-mcp-server:latest
+    container_name: hsy-mcp-server
+    environment:
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8080}
+      OPCUA_SERVER_URL: ${MCP_OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
+    ports:
+      - "${MCP_PORT:-8080}:8080"
+    depends_on:
+      - opcua-server
+    restart: unless-stopped
+    networks:
+      - hsy-network
+
+  # ==================== Database Services (Optional) ====================
+  
+  # PostgreSQL (if backend needs persistent storage)
+  postgres:
+    image: postgres:16-alpine
+    container_name: hsy-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hsy}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hsy-network
+
+  # Redis (if backend needs caching/queuing)
+  redis:
+    image: redis:7-alpine
+    container_name: hsy-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - hsy-network
+
+networks:
+  hsy-network:
+    driver: bridge
+    name: hsy-network
+
+volumes:
+  postgres_data:
+    name: hsy-postgres-data
+  redis_data:
+    name: hsy-redis-data
+
