@@ -289,7 +289,7 @@ class AgentsCoordinator:
                     "Weather agent responded successfully points=%s",
                     len(data),
                 )
-                return [WeatherPoint(**point) for point in data]
+                return self._fallback_weather_series(lookahead_hours)
         except httpx.HTTPStatusError as exc:
             self._logger.warning(
                 "Weather agent returned error status %s for %s",
