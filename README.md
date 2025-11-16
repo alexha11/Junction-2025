@@ -2,6 +2,8 @@
 
 End-to-end platform for optimizing HSY Blominmäki wastewater pumping using multi-agent forecasts, a FastAPI orchestration backend, a React operator dashboard, and supporting digital-twin tooling.
 
+**Live demo**: https://front-end-524386263600.europe-north1.run.app/ (DNS cut-over pending public domain)
+
 ## 📚 Table of Contents
 
 -   [HSY Blominmäki AI Agent Pumping Optimization System](#hsy-blominmäki-ai-agent-pumping-optimization-system)
@@ -637,6 +639,7 @@ OPCUA_PORT=4840
 -   `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
 -   `DEPLOYMENT.md` – single-source guide for running the entire platform with `docker-compose.full.yml`.
 -   `deploy/docker/README.md` – infrastructure-focused supplement (ports, scaling, production overrides).
+-   `docs/RELEASE_NOTES.md` – snapshot of the latest release (scope, highlights, validation, known issues).
 
 ## 🧭 Roadmap
 
