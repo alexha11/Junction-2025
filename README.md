@@ -42,6 +42,21 @@ End-to-end platform for optimizing HSY Blominmäki wastewater pumping using mult
 - Node.js 20+, Vite, React 18, React Query, Zustand, Tailwind, Recharts for the operator portal.
 - Docker & Docker Compose for consistent multi-service workflows across dev, demo, and production.
 
+## ⚡ Quick Start (Full Stack Docker)
+
+1. Create a root `.env` (see `DEPLOYMENT.md` or `deploy/docker/README.md`) with any overrides for ports, agent keys, or Featherless credentials.
+2. Build and launch every service—backend, frontend, MCP agents, OPC UA bridge, and optional databases—with the consolidated compose file:
+
+```bash
+docker compose -f docker-compose.full.yml build
+docker compose -f docker-compose.full.yml up -d
+docker compose -f docker-compose.full.yml ps
+```
+
+3. Visit the surfaced endpoints (`http://localhost:5173`, `http://localhost:8000/system/health`, `http://localhost:8101/health`, etc.) or run `docker compose -f docker-compose.full.yml logs -f <service>` while iterating.
+
+For production hardening, scaling guidance, and troubleshooting tips, refer to `DEPLOYMENT.md` plus `deploy/docker/README.md`.
+
 ## 📦 Installation & Setup
 
 > All commands assume the repository root. Use one virtual environment per workspace to prevent dependency clashes.
@@ -79,8 +94,11 @@ python -m agents.weather_agent.main
 python -m agents.weather_agent.server  # exposes POST /weather/forecast on :8101
 
 python -m agents.price_agent.main
+python -m agents.price_agent.server  # FastAPI shim for deterministic price data on :8102
 python -m agents.inflow_agent.main
+python -m agents.status_agent.main
 python -m agents.optimizer_agent.main
+python -m agents.optimizer_agent.server  # HTTP bridge consumed by backend + frontend
 ```
 
 - Update each agent's `main.py` to point at live integrations once credentials are available.
@@ -160,19 +178,32 @@ docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weat
 
 ## 📦 Production Build & Deployment
 
-- `docker-compose.yml` (repo root) brings up FastAPI, the Vite build served by NGINX, and digital-twin services:
+- `docker-compose.yml` (repo root) brings up FastAPI, the Vite build served by NGINX, and core digital-twin services:
 
   ```bash
   docker compose build
   docker compose up -d
   ```
 
+- `docker-compose.full.yml` adds the weather, price, and optimizer MCP services plus optional Postgres/Redis for parity with the hackathon demo stack:
+
+```bash
+docker compose -f docker-compose.full.yml build
+docker compose -f docker-compose.full.yml up -d
+```
+
+- `DEPLOYMENT.md` + `deploy/docker/README.md` outline port mappings, health checks, scaling, and production overrides for the full stack.
+
 - Services:
 
   - Backend API – `http://localhost:8000`
   - Frontend dashboard – `http://localhost:5173`
+  - Weather agent – `http://localhost:8101`
+  - Price agent – `http://localhost:8102`
+  - Optimizer agent – `http://localhost:8105`
   - OPC UA server – `opc.tcp://localhost:4840/wastewater/`
   - MCP bridge – `http://localhost:8080`
+  - Optional Postgres – `postgresql://localhost:5432/hsy`, Redis – `redis://localhost:6379/0`
 
 - Stop with `docker compose down` (add `-v` to reset volumes). Tail logs with `docker compose logs -f backend`.
 
@@ -185,7 +216,9 @@ docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weat
 | `agents/`              | MCP agent implementations (weather, price, inflow, status, optimizer) plus shared base classes.                                                                |
 | `frontend/src/`        | React entry points, components (`SystemOverviewCard`, `RecommendationPanel`, etc.), hooks, styles.                                                             |
 | `digital-twin/`        | `opcua-server/`, `mcp-server/`, `test-clients/`, and helper scripts for replaying HSY telemetry.                                                               |
+| `simulation/`          | Python models (`tunnel.py`, `pumps.py`, `state.py`) for running pump/tunnel simulations and replaying historical datasets.                                     |
 | `docs/`                | Deep-dive references: `PRD`, `AGENT`, `BACKEND`, `FRONTEND`, `TESTING`, `CURL`.                                                                                |
+| `deploy/docker/`       | Ops-focused compose overlays, environment guidance, and production deployment notes mirrored in `DEPLOYMENT.md`.                                               |
 | `sample/`              | Deterministic JSON fallbacks for market price, weather, and Valmet artifacts.                                                                                  |
 | `spot-price-forecast/` | Independent project exploring day-ahead price models with data, notebooks, and scripts.                                                                        |
 
@@ -235,12 +268,22 @@ docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weat
 | ---------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `LOG_LEVEL`                  | `INFO`                                                      | Controls backend logging verbosity.                                                        |
 | `OPTIMIZER_INTERVAL_MINUTES` | `15`                                                        | Scheduler cadence for refreshing pump recommendations.                                     |
+| `BACKEND_PORT`               | `8000`                                                      | Host port exposed by the FastAPI container in `docker-compose.full.yml`.                   |
+| `FRONTEND_PORT`              | `5173`                                                      | Host port served by the NGINX/Vite bundle.                                                 |
 | `REDIS_URL`                  | `redis://localhost:6379/0`                                  | Backend cache/broker endpoint.                                                             |
 | `DATABASE_URL`               | `postgresql+asyncpg://postgres:postgres@localhost:5432/hsy` | Async SQLAlchemy connection string.                                                        |
 | `WEATHER_AGENT_URL`          | `http://localhost:8101`                                     | Base URL used by `AgentsCoordinator`. Repeat for `PRICE`, `STATUS`, `INFLOW`, `OPTIMIZER`. |
+| `WEATHER_AGENT_PORT`         | `8101`                                                      | Host mapping for the weather agent container (similar keys exist for price/optimizer).     |
+| `OPCUA_SERVER_URL`           | `opc.tcp://localhost:4840/wastewater/`                      | Endpoint consumed by backend + MCP bridge.                                                 |
 | `OPENWEATHER_API_KEY`        | _required for live data_                                    | Injected into `WeatherAgent`. Set before invoking the agent or weather HTTP shim.          |
+| `USE_OPENWEATHER`            | `false`                                                     | Flip to `true` to fetch real forecasts instead of deterministic JSON.                      |
+| `USE_NORD_POOL`              | `false`                                                     | Enables live price pulls when credentials are configured.                                  |
 | `VITE_WEATHER_AGENT_URL`     | `http://localhost:8000/weather/forecast`                    | Frontend env var consumed by React Query hook.                                             |
-| `MCP_SERVER_PORT`            | `8080`                                                      | Digital-twin MCP server port (also doubles as simulation speedup for OPC UA server).       |
+| `MCP_SERVER_PORT`            | `8080`                                                      | Digital-twin MCP server port.                                                              |
+| `MCP_PORT`                   | `8080`                                                      | Public port binding for the MCP container (used in compose).                               |
+| `FEATHERLESS_API_BASE`       | _empty_                                                     | Optional LLM endpoint powering optimizer explanations.                                     |
+| `FEATHERLESS_API_KEY`        | _empty_                                                     | Token for Featherless/LLM usage; omit to disable explanation text.                         |
+| `LLM_MODEL`                  | `llama-3.1-8b-instruct`                                     | Model identifier passed to the optimizer agent when explanations are enabled.              |
 
 Backends read from `backend/.env` (handled by `pydantic-settings`). Agents can either use `.env` or exported variables. Frontend expects a `.env.local` with `VITE_*` keys.
 
@@ -250,12 +293,22 @@ Backends read from `backend/.env` (handled by `pydantic-settings`). Agents can e
 # backend/.env
 LOG_LEVEL=DEBUG
 OPTIMIZER_INTERVAL_MINUTES=15
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
 REDIS_URL=redis://localhost:6379/0
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hsy
 WEATHER_AGENT_URL=http://localhost:8101
 PRICE_AGENT_URL=http://localhost:8102
 INFLOW_AGENT_URL=http://localhost:8104
 OPTIMIZER_AGENT_URL=http://localhost:8105
+WEATHER_AGENT_PORT=8101
+PRICE_AGENT_PORT=8102
+OPTIMIZER_AGENT_PORT=8105
+USE_OPENWEATHER=false
+USE_NORD_POOL=false
+FEATHERLESS_API_BASE=
+FEATHERLESS_API_KEY=
+LLM_MODEL=llama-3.1-8b-instruct
 
 # agents/.env
 OPENWEATHER_API_KEY=changeme
@@ -265,6 +318,9 @@ VITE_WEATHER_AGENT_URL=http://localhost:8000/weather/forecast
 
 # digital-twin/.env
 MCP_SERVER_PORT=8080
+MCP_PORT=8080
+OPCUA_SERVER_URL=opc.tcp://localhost:4840/wastewater/
+OPCUA_PORT=4840
 ```
 
 ## 🧬 Data, Models & Digital Twin
@@ -272,6 +328,7 @@ MCP_SERVER_PORT=8080
 - `digital-twin/opcua-server/parse_historical_data.py` ingests HSY-provided CSVs (`digital-twin/opcua-server/data/*.txt`) into Parquet for fast replay.
 - `digital-twin/opcua-server/opcua_server.py` streams rows through a namespace of pump variables while `digital-twin/mcp-server/mcp_server.py` exposes browse/read/write/history/aggregate tools over SSE for MCP clients.
 - `sample/` contains JSON fallbacks (`weather_fallback.json`, `market_price_fallback.json`) and Valmet metadata for demos without live integrations.
+- `simulation/` houses the reusable `PumpingSimulation`, `TunnelModel`, and fleet utilities that back both the optimizer and demo scripts.
 - `spot-price-forecast/` bundles notebooks (`notebooks/`), scripts (`script/main.py`), and trained model metadata (`models/consumption_forecast_model_info.json`) to bootstrap price forecasting research. Requires `FINGRID_API_KEY` as described in its README.
 
 ## 🧪 Testing & QA
@@ -290,6 +347,8 @@ MCP_SERVER_PORT=8080
 - `docs/TESTING.md` – test strategy, commands, and CI recommendations.
 - `docs/CURL.md` – curated smoke-test commands for every public API.
 - `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
+- `DEPLOYMENT.md` – single-source guide for running the entire platform with `docker-compose.full.yml`.
+- `deploy/docker/README.md` – infrastructure-focused supplement (ports, scaling, production overrides).
 
 ## 🧭 Roadmap
 
