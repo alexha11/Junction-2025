@@ -5,67 +5,72 @@ This document describes the full architecture of the HSY Blominmäki AI Agent Pu
 ## High-Level Architecture
 
 ```mermaid
-graph TB
-    subgraph Frontend["Frontend Dashboard (React + Vite, Port 5173)"]
-        Panel1[System State Panel]
-        Panel2[Forecasts Panel]
-        Panel3[Schedule Panel]
-        Panel4[Weather Panel]
+flowchart LR
+    subgraph Frontend["Frontend Dashboard (React + Vite, :5173)"]
+        PanelState[System State Panel]
+        PanelForecast[Forecast & Price Cards]
+        PanelSchedule[Schedule & Overrides]
+        PanelWeather[Weather Widget]
     end
 
-    subgraph Backend["Backend API (FastAPI, Port 8000)"]
-        Coordinator[AgentsCoordinator]
-        
-        subgraph Services["Services"]
-            Optimizer[Optimizer Agent<br/>- MPC Optimization<br/>- Strategic Planning LLM<br/>- Divergence Detection<br/>- Emergency Response]
-            DigitalTwinSvc[Digital Twin Service<br/>- Read OPC UA variables<br/>- Write pump schedules<br/>- Get historical data]
-            WeatherClient[Weather Agent Client<br/>- Get precipitation forecasts<br/>- Get temperature data]
-            Scheduler[Optimization Scheduler<br/>APScheduler<br/>- Runs every 15 min<br/>- Triggers optimization<br/>- Stores results]
-        end
-        
-        Coordinator --> Optimizer
-        Coordinator --> DigitalTwinSvc
-        Coordinator --> WeatherClient
-        Coordinator --> Scheduler
+    subgraph Backend["FastAPI Backend (:8000)"]
+        API["REST API\\n/system/*, /alerts, /weather/*"]
+        AC["AgentsCoordinator\\n+ Services"]
+        Scheduler["APScheduler Loop\\n(15 min cadence)"]
+        OptimizerCore["Optimizer Interface\\n(in-process OR HTTP)"]
     end
 
-    subgraph DigitalTwin["Digital Twin"]
-        OPCUA[OPC UA Server<br/>Port 4840]
-        MCP[MCP Server<br/>Port 8080]
-        Historical[Historical Data<br/>Parquet/CSV]
-        OPCUA --> MCP
-        Historical --> OPCUA
+    subgraph Agents["MCP / HTTP Agents"]
+        WeatherAgent["Weather Agent\\n(:8101)"]
+        PriceAgent["Price Agent\\n(:8102)"]
+        InflowAgent["Inflow Agent"]
+        StatusAgent["Status Agent"]
+        OptimizerAgent["Optimizer Agent\\nHTTP/MCP (:8105)"]
     end
 
-    subgraph WeatherAgent["Weather Agent"]
-        WeatherHTTP[HTTP Server<br/>Port 8101]
-        WeatherMCP[MCP Server<br/>Port 8101]
-        OpenWeather[OpenWeatherMap API<br/>optional]
-        WeatherHTTP --> OpenWeather
-        WeatherMCP --> OpenWeather
+    subgraph Twin["Digital Twin"]
+        OPCUA["OPC UA Server\\n(:4840)"]
+        MCPBridge["MCP Bridge\\n(:8080)"]
+        Historical["Historical Data\\n(Parquet / CSV)"]
     end
 
-    subgraph PriceAgent["Price Agent (Future)"]
-        PriceAPI[Nord Pool API<br/>optional]
-        PriceFallback[Fallback Data<br/>JSON]
+    subgraph Data["State, Models & Fallbacks"]
+        Postgres[("PostgreSQL\\n(:5432)")]
+        Redis[("Redis\\n(:6379)")]
+        Samples["sample/*.json\\nDeterministic data"]
+        SpotForecast["spot-price-forecast/\\nmodels & scripts"]
     end
 
-    Frontend -->|HTTP /api/* → :8000/*| Backend
-    Backend -->|OPC UA| OPCUA
-    Backend -->|HTTP/MCP| WeatherHTTP
-    Backend -->|HTTP/MCP| WeatherMCP
-    Backend -.->|HTTP| PriceAgent
-
-    style Frontend fill:#e1f5ff
-    style Backend fill:#fff4e1
-    style DigitalTwin fill:#e8f5e9
-    style WeatherAgent fill:#f3e5f5
-    style PriceAgent fill:#fce4ec
+    PanelState --> API
+    PanelForecast --> API
+    PanelSchedule --> API
+    PanelWeather --> API
+    API --> AC
+    Scheduler --> AC
+    AC --> OptimizerCore
+    OptimizerCore --> OptimizerAgent
+    AC --> WeatherAgent
+    AC --> PriceAgent
+    AC --> InflowAgent
+    AC --> StatusAgent
+    AC -->|OPC UA read/write| OPCUA
+    AC -->|MCP tools| MCPBridge
+    MCPBridge --> OPCUA
+    OPCUA --> Historical
+    Historical --> OPCUA
+    AC <-->|state/cache| Postgres
+    AC <-->|jobs/cache| Redis
+    OptimizerAgent --> SpotForecast
+    WeatherAgent --> Samples
+    PriceAgent --> Samples
+    InflowAgent --> Samples
+    AC --> Samples
 ```
 
 ## Component Details
 
 ### 1. Frontend Dashboard
+
 - **Technology**: React + Vite + TypeScript
 - **Port**: 5173
 - **Proxy**: `/api/*` → `http://localhost:8000/*`
@@ -77,6 +82,7 @@ graph TB
   - Alerts Banner (critical warnings)
 
 ### 2. Backend API
+
 - **Technology**: FastAPI + Python 3.12+
 - **Port**: 8000
 - **Key Services**:
@@ -86,6 +92,7 @@ graph TB
   - `DigitalTwinAdapter`: Variable mapping & conversions
 
 ### 3. Optimizer Agent (Integrated)
+
 - **Location**: Runs inside backend process
 - **Technology**: OR-Tools (SCIP solver) + LLM (optional)
 - **Features**:
@@ -97,26 +104,25 @@ graph TB
   - Multiple objectives (cost, smoothness, safety, efficiency)
 
 ### 4. Digital Twin
+
 - **OPC UA Server**: Simulates wastewater system
   - Port: 4840
   - Protocol: OPC UA
   - Data: Historical HSY data (Parquet/CSV)
   - Variables: L1, L2, F1, F2, pump frequencies, prices
-  
 - **MCP Server**: Bridge to OPC UA
   - Port: 8080
   - Protocol: MCP (Server-Sent Events)
   - Tools: browse, read, write, history, aggregate
 
 ### 5. Weather Agent
+
 - **HTTP Server**: REST API
   - Port: 8101
   - Endpoint: `/weather/forecast`
-  
 - **MCP Server**: MCP protocol
   - Port: 8101 (same port, different transport)
   - Tools: `get_precipitation_forecast`, `get_current_weather`, `check_weather_agent_health`
-  
 - **Data Source**: OpenWeatherMap API (optional, falls back to sample data)
 
 ## Data Flow
@@ -139,35 +145,35 @@ sequenceDiagram
     Note over Scheduler: Every 15 minutes
     Scheduler->>Coordinator: get_schedule_recommendation()
     Coordinator->>Optimizer: generate_schedule()
-    
+
     Optimizer->>Backend: GET /system/state
     Backend->>DigitalTwin: Read OPC UA variables
     DigitalTwin-->>Backend: System state
     Backend-->>Optimizer: CurrentState
-    
+
     Optimizer->>Weather: Get weather forecast
     Weather-->>Optimizer: Precipitation data
-    
+
     Optimizer->>Price: Get price forecast (future)
     Price-->>Optimizer: Price forecast or fallback
-    
+
     Optimizer->>Optimizer: Estimate inflow (weather-based)
-    
+
     Optimizer->>LLM: Get strategic plan (cached)
     LLM-->>Optimizer: Strategic plan (24h)
-    
+
     Optimizer->>Optimizer: Detect divergence
     Optimizer->>Optimizer: Generate emergency response (if needed)
-    
+
     Optimizer->>Solver: Run MPC optimization
     Solver-->>Optimizer: Schedule + metrics
-    
+
     Optimizer-->>Coordinator: ScheduleRecommendation
     Coordinator->>Coordinator: Store in _latest_optimization_result
-    
+
     Coordinator->>DigitalTwin: Write schedule (OPC UA)
     DigitalTwin-->>Coordinator: Confirmation
-    
+
     Dashboard->>Backend: GET /system/schedule
     Backend-->>Dashboard: Schedule + metrics
 ```
@@ -187,7 +193,7 @@ sequenceDiagram
     Backend->>Coordinator: get_system_state()
     Coordinator->>DigitalTwinSvc: get_digital_twin_current_state()
     DigitalTwinSvc->>OPCUA: Connect opc.tcp://localhost:4840/wastewater/
-    
+
     Note over OPCUA: Read Variables:
     Note over OPCUA: - WaterLevelInTunnel.L2.m
     Note over OPCUA: - WaterVolumeInTunnel.L1.m3
@@ -196,16 +202,16 @@ sequenceDiagram
     Note over OPCUA: - PumpFrequency.{pump_id}.hz
     Note over OPCUA: - PumpFlow.{pump_id}.m3h
     Note over OPCUA: - ElectricityPrice.2.Normal.ckwh
-    
+
     OPCUA-->>DigitalTwinSvc: Raw OPC UA values
     DigitalTwinSvc->>Adapter: Convert units & map variables
-    
+
     Note over Adapter: Conversions:
     Note over Adapter: - m³/h → m³/s
     Note over Adapter: - c/kWh → EUR/MWh
     Note over Adapter: - Volume → Level (L1)
     Note over Adapter: - Flow → Pump state (on/off)
-    
+
     Adapter-->>DigitalTwinSvc: SystemState model
     DigitalTwinSvc-->>Coordinator: SystemState
     Coordinator-->>Backend: SystemState
@@ -228,7 +234,7 @@ sequenceDiagram
 
     Dashboard->>Backend: POST /api/weather/forecast
     Backend->>Coordinator: get_weather_forecast()
-    
+
     alt MCP Server enabled
         Coordinator->>WeatherMCP: POST /tools/get_precipitation_forecast
         alt MCP Success
@@ -278,7 +284,7 @@ sequenceDiagram
             Fallback-->>Coordinator: Sample WeatherPoint[]
         end
     end
-    
+
     Coordinator-->>Backend: WeatherPoint[]
     Backend-->>Dashboard: JSON WeatherPoint[]
     Dashboard->>Dashboard: Display forecast
@@ -291,21 +297,21 @@ graph TB
     subgraph Frontend["Frontend"]
         FE[React Dashboard]
     end
-    
+
     subgraph Backend["Backend API"]
         AC[AgentsCoordinator]
         OA[Optimizer Agent<br/>Integrated]
         DT[Digital Twin Service]
         WC[Weather Client]
     end
-    
+
     subgraph External["External Services"]
         OPCUA[OPC UA Server]
         MCP[MCP Server]
         WA[Weather Agent]
         PA[Price Agent<br/>Future]
     end
-    
+
     FE -->|HTTP REST<br/>/api/*| AC
     AC -->|Direct call| OA
     AC -->|Read/Write| DT
@@ -316,28 +322,32 @@ graph TB
     OA -.->|HTTP| PA
     OA -->|GET /system/state| AC
     OA -->|GET /weather/forecast| AC
-    
+
     style Frontend fill:#e1f5ff
     style Backend fill:#fff4e1
     style External fill:#e8f5e9
 ```
 
 ### Backend ↔ Digital Twin
+
 - **Read**: OPC UA Client → Read variables → Convert units → SystemState
 - **Write**: Schedule → Convert pump IDs → Write frequencies to OPC UA
 - **History**: MCP Server → Aggregate variables → Return statistics
 
 ### Backend ↔ Weather Agent
+
 - **Primary**: HTTP endpoint (`/weather/forecast`)
 - **Optional**: MCP tools (`/tools/get_precipitation_forecast`)
 - **Fallback**: Sample JSON data
 
 ### Backend ↔ Optimizer Agent
+
 - **Integrated**: Runs in same process
 - **Direct calls**: `optimizer_agent.generate_schedule()`
 - **Data sources**: Backend endpoints (digital twin, weather)
 
 ### Frontend ↔ Backend
+
 - **Proxy**: Vite dev server proxies `/api/*` to `http://localhost:8000/*`
 - **CORS**: Enabled for `localhost:5173` and `localhost:3000`
 - **Endpoints**: All `/system/*` and `/weather/*` routes
@@ -345,6 +355,7 @@ graph TB
 ## Configuration
 
 ### Backend Configuration (`backend/.env`)
+
 ```bash
 # Digital Twin
 DIGITAL_TWIN_OPCUA_URL=opc.tcp://localhost:4840/wastewater/
@@ -368,6 +379,7 @@ OPTIMIZER_INTERVAL_MINUTES=15
 ```
 
 ### Frontend Configuration (`frontend/.env.local`)
+
 ```bash
 VITE_WEATHER_AGENT_URL=http://localhost:8000/weather/forecast
 ```
@@ -382,7 +394,7 @@ graph LR
     Backend -->|OPC UA| DigitalTwin[Digital Twin<br/>OPC UA<br/>:4840]
     Backend -->|HTTP/MCP| Weather[Weather Agent<br/>:8101]
     Backend -.->|Integrated| Optimizer[Optimizer Agent<br/>in-process]
-    
+
     style Frontend fill:#e1f5ff
     style Backend fill:#fff4e1
     style DigitalTwin fill:#e8f5e9
@@ -399,15 +411,15 @@ graph TB
         Backend[Backend<br/>Uvicorn]
         Postgres[Postgres]
         Redis[Redis]
-        
+
         Frontend --> Backend
         Backend --> Postgres
         Backend --> Redis
     end
-    
+
     Docker -->|OPC UA| DigitalTwin[Digital Twin<br/>OPC UA Server]
     Docker -->|HTTP/MCP| WeatherAgent[Weather Agent<br/>HTTP/MCP Server]
-    
+
     style Docker fill:#e3f2fd
     style DigitalTwin fill:#e8f5e9
     style WeatherAgent fill:#f3e5f5
@@ -416,6 +428,7 @@ graph TB
 ## Technology Stack
 
 ### Frontend
+
 - React 18
 - Vite
 - TypeScript
@@ -424,6 +437,7 @@ graph TB
 - Recharts (visualization)
 
 ### Backend
+
 - FastAPI
 - Python 3.12+
 - APScheduler (background jobs)
@@ -432,17 +446,20 @@ graph TB
 - opcua (OPC UA client)
 
 ### Optimizer Agent
+
 - OR-Tools (SCIP solver)
 - NumPy, Pandas (data processing)
 - LLM (optional, for strategic planning)
 
 ### Digital Twin
+
 - OPC UA Server (python-opcua)
 - MCP Server (FastMCP)
 - SQLite (historical data storage)
 - Pandas (data processing)
 
 ### Weather Agent
+
 - FastAPI (HTTP server)
 - FastMCP (MCP server)
 - httpx (OpenWeatherMap client)
@@ -450,6 +467,7 @@ graph TB
 ## Data Models
 
 ### SystemState
+
 ```python
 {
   "timestamp": datetime,
@@ -471,6 +489,7 @@ graph TB
 ```
 
 ### ScheduleRecommendation
+
 ```python
 {
   "generated_at": datetime,
@@ -488,6 +507,7 @@ graph TB
 ```
 
 ### OptimizationMetrics
+
 ```python
 {
   "generated_at": str,
@@ -501,16 +521,19 @@ graph TB
 ## Communication Protocols
 
 ### HTTP REST API
+
 - **Backend ↔ Frontend**: JSON over HTTP
 - **Backend ↔ Weather Agent**: JSON over HTTP
 - **Backend ↔ Digital Twin MCP**: JSON over HTTP (tool calls)
 
 ### OPC UA
+
 - **Backend ↔ Digital Twin**: OPC UA protocol
 - **Variables**: Read/Write operations
 - **History**: Historical data queries
 
 ### MCP (Model Context Protocol)
+
 - **Digital Twin MCP Server**: SSE transport
 - **Weather Agent MCP Server**: SSE transport
 - **Tool-based**: Browse, read, write, aggregate operations
@@ -518,21 +541,25 @@ graph TB
 ## Error Handling & Fallbacks
 
 ### Digital Twin Unavailable
+
 1. Backend logs warning
 2. Falls back to synthetic system state
 3. Dashboard still works (shows stub data)
 
 ### Weather Agent Unavailable
+
 1. Backend tries MCP, then HTTP
 2. Falls back to sample weather data
 3. Optimization continues (uses fallback forecasts)
 
 ### Optimizer Agent Unavailable
+
 1. Backend logs warning
 2. Falls back to stub schedule
 3. Dashboard still works (shows stub schedule)
 
 ### Network Failures
+
 - All HTTP calls have timeouts
 - Graceful degradation at each layer
 - Logging for debugging
@@ -559,4 +586,3 @@ graph TB
 - **WebSocket**: Real-time updates (replace polling)
 - **Persistence**: Store schedules in Postgres
 - **Analytics**: Historical optimization performance
-
