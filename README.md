@@ -4,44 +4,64 @@ End-to-end platform for optimizing HSY Blominmäki wastewater pumping using mult
 
 ## 📚 Table of Contents
 
-- [HSY Blominmäki AI Agent Pumping Optimization System](#hsy-blominmäki-ai-agent-pumping-optimization-system)
-  - [📚 Table of Contents](#-table-of-contents)
-  - [🚀 Features](#-features)
-  - [🛠️ Technology Stack](#%EF%B8%8F-technology-stack)
-  - [🏗️ Architecture Overview](#%EF%B8%8F-architecture-overview)
-  - [📦 Installation & Setup](#-installation--setup)
-    - [Backend](#backend)
-    - [MCP Agents](#mcp-agents)
-    - [Frontend](#frontend)
-    - [Digital-Twin Tooling](#digital-twin-tooling)
-  - [🚀 Running the Application](#-running-the-application)
-  - [📦 Production Build & Deployment](#-production-build--deployment)
-  - [📁 Project Structure](#-project-structure)
-  - [🔑 Key Features Explained](#-key-features-explained)
-  - [🔌 API Endpoints](#-api-endpoints)
-  - [🔧 Troubleshooting](#-troubleshooting)
-  - [📝 Notes](#-notes)
-  - [🤝 Contributing](#-contributing)
-  - [🔐 Configuration & Secrets](#-configuration--secrets)
-    - [🧾 Sample `.env`](#-sample-env)
-  - [🧬 Data, Models & Digital Twin](#-data-models--digital-twin)
-  - [🧪 Testing & QA](#-testing--qa)
-  - [🗂️ Documentation Map](#%EF%B8%8F-documentation-map)
-  - [🧭 Roadmap](#-roadmap)
+-   [HSY Blominmäki AI Agent Pumping Optimization System](#hsy-blominmäki-ai-agent-pumping-optimization-system)
+    -   [📚 Table of Contents](#-table-of-contents)
+    -   [🚀 Features](#-features)
+    -   [🛠️ Technology Stack](#️-technology-stack)
+    -   [🏗️ Architecture Overview](#️-architecture-overview)
+    -   [⚡ Quick Start (Full Stack Docker)](#-quick-start-full-stack-docker)
+    -   [📦 Installation \& Setup](#-installation--setup)
+        -   [Backend](#backend)
+        -   [MCP Agents](#mcp-agents)
+        -   [Frontend](#frontend)
+        -   [Digital-Twin Tooling](#digital-twin-tooling)
+    -   [🚀 Running the Application](#-running-the-application)
+    -   [📦 Production Build \& Deployment](#-production-build--deployment)
+    -   [📁 Project Structure](#-project-structure)
+    -   [🔑 Key Features Explained](#-key-features-explained)
+    -   [🔌 API Endpoints](#-api-endpoints)
+    -   [Digital Twin API Docs](#digital-twin-api-docs)
+        -   [OPC UA Server](#opc-ua-server)
+            -   [Available Variables](#available-variables)
+                -   [Water Levels \& Flow](#water-levels--flow)
+                -   [Pump Flow (8 pumps: 2 stations × 4 pumps each)](#pump-flow-8-pumps-2-stations--4-pumps-each)
+                -   [Pump Efficiency (Power intake in kW)](#pump-efficiency-power-intake-in-kw)
+                -   [Pump Frequency (Control signals in Hz)](#pump-frequency-control-signals-in-hz)
+                -   [Electricity Pricing](#electricity-pricing)
+                -   [System Status](#system-status)
+            -   [Client Connection Example](#client-connection-example)
+        -   [MCP Server (Model Context Protocol)](#mcp-server-model-context-protocol)
+            -   [Available Tools](#available-tools)
+                -   [1. `browse_opcua_variables()`](#1-browse_opcua_variables)
+                -   [2. `read_opcua_variable(variable_name: str)`](#2-read_opcua_variablevariable_name-str)
+                -   [3. `write_opcua_variable(variable_name: str, value: float)`](#3-write_opcua_variablevariable_name-str-value-float)
+                -   [4. `get_variable_history(variable_name: str, hours_back: int = 24)`](#4-get_variable_historyvariable_name-str-hours_back-int--24)
+                -   [5. `aggregate_variable_data(variable_name: str, hours_back: int = 24)`](#5-aggregate_variable_datavariable_name-str-hours_back-int--24)
+                -   [6. `aggregate_multiple_variables_data(variable_names: List[str], hours_back: int = 24)`](#6-aggregate_multiple_variables_datavariable_names-liststr-hours_back-int--24)
+            -   [Transport](#transport)
+    -   [🔧 Troubleshooting](#-troubleshooting)
+    -   [📝 Notes](#-notes)
+    -   [🤝 Contributing](#-contributing)
+    -   [🔐 Configuration \& Secrets](#-configuration--secrets)
+        -   [🧾 Sample `.env`](#-sample-env)
+    -   [🧬 Data, Models \& Digital Twin](#-data-models--digital-twin)
+    -   [🧪 Testing \& QA](#-testing--qa)
+    -   [🗂️ Documentation Map](#️-documentation-map)
+    -   [🧭 Roadmap](#-roadmap)
 
 ## 🚀 Features
 
-- Coordinate deterministic MCP agents (weather, price, status, inflow, optimizer) to refresh pump recommendations every 15 minutes.
-- Surface tunnel telemetry, forecasts, AI schedules, and operator overrides through a Tailwind-styled React dashboard.
-- Mirror field conditions via a digital twin (OPC UA + MCP bridge) backed by historical HSY data for safe experimentation.
-- Package research-grade Nord Pool price forecasting tools to accelerate optimization strategy iteration.
+-   Coordinate deterministic MCP agents (weather, price, status, inflow, optimizer) to refresh pump recommendations every 15 minutes.
+-   Surface tunnel telemetry, forecasts, AI schedules, and operator overrides through a Tailwind-styled React dashboard.
+-   Mirror field conditions via a digital twin (OPC UA + MCP bridge) backed by historical HSY data for safe experimentation.
+-   Package research-grade Nord Pool price forecasting tools to accelerate optimization strategy iteration.
 
 ## 🛠️ Technology Stack
 
-- Python 3.12 recommended (backend + agents) with component-specific `requirements.txt` files.
-- FastAPI, Pydantic, SQLAlchemy, APScheduler, Redis/Postgres clients for orchestration logic.
-- Node.js 20+, Vite, React 18, React Query, Zustand, Tailwind, Recharts for the operator portal.
-- Docker & Docker Compose for consistent multi-service workflows across dev, demo, and production.
+-   Python 3.12 recommended (backend + agents) with component-specific `requirements.txt` files.
+-   FastAPI, Pydantic, SQLAlchemy, APScheduler, Redis/Postgres clients for orchestration logic.
+-   Node.js 20+, Vite, React 18, React Query, Zustand, Tailwind, Recharts for the operator portal.
+-   Docker & Docker Compose for consistent multi-service workflows across dev, demo, and production.
 
 ## 🏗️ Architecture Overview
 
@@ -96,12 +116,12 @@ flowchart LR
   Samples -.provides.-> Price
 ```
 
-- **Frontend** renders telemetry, forecasts, and AI schedules; it proxies `/api/*` calls to the backend and will later subscribe to push updates.
-- **FastAPI backend** hosts public APIs, the `AgentsCoordinator`, and the scheduler loop that fanouts to MCP agents, the optimizer, and the digital twin.
-- **MCP agents** (weather, price, status, inflow, optimizer) can run standalone over HTTP or MCP; the backend can either call them directly or delegate to an HTTP-facing optimizer service.
-- **Digital twin** pairs an OPC UA server (realistic tunnel + pump signals) with an MCP bridge so the backend can both read state and push pump frequencies safely.
-- **Data planes** (Postgres/Redis) are optional but wired into `docker-compose.full.yml` for persistence, caching, and future analytics.
-- **Fallback samples** flow from `sample/*.json` whenever live APIs or MCP bridges are unavailable, keeping recommendations predictable during demos.
+-   **Frontend** renders telemetry, forecasts, and AI schedules; it proxies `/api/*` calls to the backend and will later subscribe to push updates.
+-   **FastAPI backend** hosts public APIs, the `AgentsCoordinator`, and the scheduler loop that fanouts to MCP agents, the optimizer, and the digital twin.
+-   **MCP agents** (weather, price, status, inflow, optimizer) can run standalone over HTTP or MCP; the backend can either call them directly or delegate to an HTTP-facing optimizer service.
+-   **Digital twin** pairs an OPC UA server (realistic tunnel + pump signals) with an MCP bridge so the backend can both read state and push pump frequencies safely.
+-   **Data planes** (Postgres/Redis) are optional but wired into `docker-compose.full.yml` for persistence, caching, and future analytics.
+-   **Fallback samples** flow from `sample/*.json` whenever live APIs or MCP bridges are unavailable, keeping recommendations predictable during demos.
 
 Operational highlights:
 
@@ -147,8 +167,8 @@ docker build -t hsy-backend .
 docker run -p 8000:8000 --env-file .env hsy-backend
 ```
 
-- Optional: `LOG_LEVEL=DEBUG uvicorn app.main:app --reload` enables verbose router/scheduler logs.
-- API smoke tests: `pytest tests/test_api_routes.py -q`.
+-   Optional: `LOG_LEVEL=DEBUG uvicorn app.main:app --reload` enables verbose router/scheduler logs.
+-   API smoke tests: `pytest tests/test_api_routes.py -q`.
 
 ### MCP Agents
 
@@ -170,7 +190,7 @@ python -m agents.optimizer_agent.main
 python -m agents.optimizer_agent.server  # HTTP bridge consumed by backend + frontend
 ```
 
-- Update each agent's `main.py` to point at live integrations once credentials are available.
+-   Update each agent's `main.py` to point at live integrations once credentials are available.
 
 ### Frontend
 
@@ -189,92 +209,92 @@ docker build -t hsy-frontend .
 docker run -p 5173:5173 --env VITE_WEATHER_AGENT_URL="http://localhost:8000/weather/forecast" hsy-frontend
 ```
 
-- Dev proxy forwards `/api/*` to `http://localhost:8000`; keep the backend running to avoid 404s.
-- Planned tests: `npm run test` (Vitest) and `npx playwright test` when E2E flows stabilize.
+-   Dev proxy forwards `/api/*` to `http://localhost:8000`; keep the backend running to avoid 404s.
+-   Planned tests: `npm run test` (Vitest) and `npx playwright test` when E2E flows stabilize.
 
 ### Digital-Twin Tooling
 
-- **OPC UA server**
+-   **OPC UA server**
 
-  ```bash
-  cd digital-twin/opcua-server
-  pip install -r requirements.txt
-  python opcua_server.py  # streams historical HSY data into the OPC UA namespace
-  ```
+    ```bash
+    cd digital-twin/opcua-server
+    pip install -r requirements.txt
+    python opcua_server.py  # streams historical HSY data into the OPC UA namespace
+    ```
 
-  Or via Docker Compose:
+    Or via Docker Compose:
 
-  ```bash
-  cd digital-twin
-  docker compose up --build  # starts both the OPC UA server & the MCP bridge
-  ```
+    ```bash
+    cd digital-twin
+    docker compose up --build  # starts both the OPC UA server & the MCP bridge
+    ```
 
-- **MCP bridge**
+-   **MCP bridge**
 
-  ```bash
-  cd digital-twin/mcp-server
-  pip install -r requirements.txt
-  export MCP_SERVER_PORT=8080
-  python mcp_server.py  # exposes browse/read/write/history tools over SSE
-  ```
+    ```bash
+    cd digital-twin/mcp-server
+    pip install -r requirements.txt
+    export MCP_SERVER_PORT=8080
+    python mcp_server.py  # exposes browse/read/write/history tools over SSE
+    ```
 
-  Or via Docker Compose (same command as above).
+    Or via Docker Compose (same command as above).
 
-- **Test clients**
+-   **Test clients**
 
-  ```bash
-  cd digital-twin/test-clients
-  ./run.sh  # Requires Python 3.13 on PATH
-  ```
+    ```bash
+    cd digital-twin/test-clients
+    ./run.sh  # Requires Python 3.13 on PATH
+    ```
 
 ## 🚀 Running the Application
 
-- Maintain separate shells for backend, agents, frontend, and the digital twin for faster iteration.
-- Quick local dev loop:
+-   Maintain separate shells for backend, agents, frontend, and the digital twin for faster iteration.
+-   Quick local dev loop:
 
-  ```bash
-  # Terminal 1
-  cd backend && source .venv/bin/activate && uvicorn app.main:app --reload
+    ```bash
+    # Terminal 1
+    cd backend && source .venv/bin/activate && uvicorn app.main:app --reload
 
-  # Terminal 2
-  cd agents && source .venv/bin/activate && python -m agents.weather_agent.server
+    # Terminal 2
+    cd agents && source .venv/bin/activate && python -m agents.weather_agent.server
 
-  # Terminal 3
-  cd frontend && npm run dev
-  ```
+    # Terminal 3
+    cd frontend && npm run dev
+    ```
 
-- For fully deterministic smoke tests, export `USE_SAMPLE_DATA=1` (backend) and rely on `sample/*.json` fallbacks.
+-   For fully deterministic smoke tests, export `USE_SAMPLE_DATA=1` (backend) and rely on `sample/*.json` fallbacks.
 
 ## 📦 Production Build & Deployment
 
-- `docker-compose.yml` (repo root) brings up FastAPI, the Vite build served by NGINX, and core digital-twin services:
+-   `docker-compose.yml` (repo root) brings up FastAPI, the Vite build served by NGINX, and core digital-twin services:
 
-  ```bash
-  docker compose build
-  docker compose up -d
-  ```
+    ```bash
+    docker compose build
+    docker compose up -d
+    ```
 
-- `docker-compose.full.yml` adds the weather, price, and optimizer MCP services plus optional Postgres/Redis for parity with the hackathon demo stack:
+-   `docker-compose.full.yml` adds the weather, price, and optimizer MCP services plus optional Postgres/Redis for parity with the hackathon demo stack:
 
 ```bash
 docker compose -f docker-compose.full.yml build
 docker compose -f docker-compose.full.yml up -d
 ```
 
-- `DEPLOYMENT.md` + `deploy/docker/README.md` outline port mappings, health checks, scaling, and production overrides for the full stack.
+-   `DEPLOYMENT.md` + `deploy/docker/README.md` outline port mappings, health checks, scaling, and production overrides for the full stack.
 
-- Services:
+-   Services:
 
-  - Backend API – `http://localhost:8000`
-  - Frontend dashboard – `http://localhost:5173`
-  - Weather agent – `http://localhost:8101`
-  - Price agent – `http://localhost:8102`
-  - Optimizer agent – `http://localhost:8105`
-  - OPC UA server – `opc.tcp://localhost:4840/wastewater/`
-  - MCP bridge – `http://localhost:8080`
-  - Optional Postgres – `postgresql://localhost:5432/hsy`, Redis – `redis://localhost:6379/0`
+    -   Backend API – `http://localhost:8000`
+    -   Frontend dashboard – `http://localhost:5173`
+    -   Weather agent – `http://localhost:8101`
+    -   Price agent – `http://localhost:8102`
+    -   Optimizer agent – `http://localhost:8105`
+    -   OPC UA server – `opc.tcp://localhost:4840/wastewater/`
+    -   MCP bridge – `http://localhost:8080`
+    -   Optional Postgres – `postgresql://localhost:5432/hsy`, Redis – `redis://localhost:6379/0`
 
-- Stop with `docker compose down` (add `-v` to reset volumes). Tail logs with `docker compose logs -f backend`.
+-   Stop with `docker compose down` (add `-v` to reset volumes). Tail logs with `docker compose logs -f backend`.
 
 ## 📁 Project Structure
 
@@ -293,11 +313,11 @@ docker compose -f docker-compose.full.yml up -d
 
 ## 🔑 Key Features Explained
 
-- **Multi-agent forecasting** – Weather, electricity price, inflow, status, and optimizer agents expose deterministic tools that can be swapped for live data sources without changing contracts.
-- **Optimization scheduler** – A background `OptimizationScheduler` in FastAPI orchestrates Redis/Postgres state, agent calls, and schedule refreshes every 15 minutes.
-- **Operator dashboard** – React + Tailwind portal showcases tunnel telemetry, AI recommendations, override flows, alerts, and agent health cards.
-- **Digital twin** – OPC UA server seeded from historical HSY dumps plus an MCP bridge enables safe pump simulations and read/write experiments before field rollout.
-- **Research toolkit** – `spot-price-forecast/` contains notebooks, models, and scripts for Nord Pool spot price modeling to feed optimizer heuristics.
+-   **Multi-agent forecasting** – Weather, electricity price, inflow, status, and optimizer agents expose deterministic tools that can be swapped for live data sources without changing contracts.
+-   **Optimization scheduler** – A background `OptimizationScheduler` in FastAPI orchestrates Redis/Postgres state, agent calls, and schedule refreshes every 15 minutes.
+-   **Operator dashboard** – React + Tailwind portal showcases tunnel telemetry, AI recommendations, override flows, alerts, and agent health cards.
+-   **Digital twin** – OPC UA server seeded from historical HSY dumps plus an MCP bridge enables safe pump simulations and read/write experiments before field rollout.
+-   **Research toolkit** – `spot-price-forecast/` contains notebooks, models, and scripts for Nord Pool spot price modeling to feed optimizer heuristics.
 
 ## 🔌 API Endpoints
 
@@ -309,27 +329,226 @@ docker compose -f docker-compose.full.yml up -d
 | `/alerts`                 | GET    | Active alerts surfaced to the operator portal.  |
 | `/weather/forecast`       | POST   | Weather agent shim exposing deterministic data. |
 
-- Additional curls and payloads live in `docs/CURL.md` and `backend/DEBUGGING.md`.
+-   Additional curls and payloads live in `docs/CURL.md` and `backend/DEBUGGING.md`.
+
+## Digital Twin API Docs
+
+### OPC UA Server
+
+#### Available Variables
+
+The server exposes the following variables under the `PumpStation` object:
+
+##### Water Levels & Flow
+
+-   `WaterLevelInTunnel.L2.m` - Water level in tunnel (meters)
+-   `WaterVolumeInTunnel.L1.m3` - Water volume in tunnel (cubic meters)
+-   `SumOfPumpedFlowToWwtp.F2.m3h` - Total pumped flow to WWTP (m³/h)
+-   `InflowToTunnel.F1.m3per15min` - Inflow to tunnel per 15 minutes
+
+##### Pump Flow (8 pumps: 2 stations × 4 pumps each)
+
+-   `PumpFlow.1.1.m3h` to `PumpFlow.1.4.m3h` - Station 1 pump flows
+-   `PumpFlow.2.1.m3h` to `PumpFlow.2.4.m3h` - Station 2 pump flows
+
+##### Pump Efficiency (Power intake in kW)
+
+-   `PumpEfficiency.1.1.kw` to `PumpEfficiency.1.4.kw` - Station 1 pump power
+-   `PumpEfficiency.2.1.kw` to `PumpEfficiency.2.4.kw` - Station 2 pump power
+
+##### Pump Frequency (Control signals in Hz)
+
+-   `PumpFrequency.1.1.hz` to `PumpFrequency.1.4.hz` - Station 1 pump frequencies
+-   `PumpFrequency.2.1.hz` to `PumpFrequency.2.4.hz` - Station 2 pump frequencies
+
+##### Electricity Pricing
+
+-   `ElectricityPrice.1.High.ckwh` - High-variance and peak electricity price day (cents/kWh)
+-   `ElectricityPrice.2.Normal.ckwh` - Normal-variance and normal electricity price (cents/kWh)
+
+##### System Status
+
+-   `SimulationTime` - Current simulation timestamp
+
+#### Client Connection Example
+
+```python
+from opcua import Client
+
+client = Client("opc.tcp://localhost:4840/wastewater/")
+client.connect()
+
+# Browse available variables
+objects = client.get_objects_node()
+pump_station = objects.get_child("2:PumpStation")
+variables = pump_station.get_children()
+
+# Read a specific variable
+water_level = pump_station.get_child("2:WaterLevelInTunnel.L2.m")
+current_level = water_level.get_value()
+
+client.disconnect()
+```
+
+---
+
+### MCP Server (Model Context Protocol)
+
+#### Available Tools
+
+##### 1. `browse_opcua_variables()`
+
+Lists all available OPC UA variables in the pump station.
+
+**Returns**: `List[str]` - Array of variable names
+
+**Example Response**:
+
+```json
+[
+	"WaterLevelInTunnel.L2.m",
+	"PumpFlow.1.1.m3h",
+	"PumpFrequency.1.1.hz",
+	"ElectricityPrice.2.Normal.ckwh"
+]
+```
+
+##### 2. `read_opcua_variable(variable_name: str)`
+
+Reads the current value of a specific variable.
+
+**Parameters**:
+
+-   `variable_name`: Name of the variable to read
+
+**Returns**: `str` - Current value as string
+
+**Example**:
+
+```python
+# Read current water level
+value = read_opcua_variable("WaterLevelInTunnel.L2.m")
+# Returns: "3.45"
+```
+
+##### 3. `write_opcua_variable(variable_name: str, value: float)`
+
+Writes a value to a writable OPC UA variable.
+
+**Parameters**:
+
+-   `variable_name`: Name of the variable to write
+-   `value`: Numeric value to write
+
+**Returns**: `bool` - Success status
+
+**Example**:
+
+```python
+# Set pump frequency
+success = write_opcua_variable("PumpFrequency.1.1.hz", 45.0)
+# Returns: True
+```
+
+##### 4. `get_variable_history(variable_name: str, hours_back: int = 24)`
+
+Retrieves historical data for a variable.
+
+**Parameters**:
+
+-   `variable_name`: Name of the variable
+-   `hours_back`: Number of hours of history to retrieve (default: 24)
+
+**Returns**: `List[Dict]` - Historical data points
+
+**Example Response**:
+
+```json
+[
+	{
+		"timestamp": "2025-11-16T10:30:00",
+		"value": 3.45,
+		"quality": "Good"
+	},
+	{
+		"timestamp": "2025-11-16T10:45:00",
+		"value": 3.52,
+		"quality": "Good"
+	}
+]
+```
+
+##### 5. `aggregate_variable_data(variable_name: str, hours_back: int = 24)`
+
+Calculates statistical aggregations for a variable's historical data.
+
+**Parameters**:
+
+-   `variable_name`: Name of the variable
+-   `hours_back`: Number of hours to analyze (default: 24)
+
+**Returns**: `Dict` - Statistical summary
+
+**Example Response**:
+
+```json
+{
+	"variable_name": "WaterLevelInTunnel.L2.m",
+	"period_hours": 24,
+	"data_points": 96,
+	"min": 2.85,
+	"max": 4.12,
+	"avg": 3.48,
+	"first_timestamp": "2025-11-15T10:30:00",
+	"last_timestamp": "2025-11-16T10:30:00"
+}
+```
+
+##### 6. `aggregate_multiple_variables_data(variable_names: List[str], hours_back: int = 24)`
+
+Calculates aggregations for multiple variables at once.
+
+**Parameters**:
+
+-   `variable_names`: List of variable names to analyze
+-   `hours_back`: Number of hours to analyze (default: 24)
+
+**Returns**: `List[Dict]` - Array of statistical summaries
+
+**Example**:
+
+```python
+# Analyze multiple pump parameters
+results = aggregate_multiple_variables_data([
+    "PumpFlow.1.1.m3h",
+    "PumpEfficiency.1.1.kw",
+    "PumpFrequency.1.1.hz"
+], hours_back=12)
+```
+
+#### Transport
+
+The MCP server uses Server-Sent Events (SSE) transport.
 
 ## 🔧 Troubleshooting
 
-- Curl snippets: `docs/CURL.md` and `backend/DEBUGGING.md` cover `/system/*`, `/weather/forecast`, `/alerts`.
-- Scheduler idle: ensure `OPTIMIZER_INTERVAL_MINUTES` > 0 and watch for `OptimizationScheduler started` in logs with `LOG_LEVEL=DEBUG`.
-- Agent HTTP failures: confirm service URLs (`WEATHER`, `PRICE`, `STATUS`, `INFLOW`, `OPTIMIZER`) and agent servers (e.g., `agents/weather_agent/server.py`) are running.
-- Frontend blank data: verify `VITE_WEATHER_AGENT_URL` resolves and backend proxy exposes `/weather/forecast`.
-- Digital twin timeouts: launch the OPC UA server (`opc.tcp://localhost:4840/wastewater/`) before the MCP server or clients.
+-   Curl snippets: `docs/CURL.md` and `backend/DEBUGGING.md` cover `/system/*`, `/weather/forecast`, `/alerts`.
+-   Scheduler idle: ensure `OPTIMIZER_INTERVAL_MINUTES` > 0 and watch for `OptimizationScheduler started` in logs with `LOG_LEVEL=DEBUG`.
+-   Agent HTTP failures: confirm service URLs (`WEATHER`, `PRICE`, `STATUS`, `INFLOW`, `OPTIMIZER`) and agent servers (e.g., `agents/weather_agent/server.py`) are running.
+-   Frontend blank data: verify `VITE_WEATHER_AGENT_URL` resolves and backend proxy exposes `/weather/forecast`.
+-   Digital twin timeouts: launch the OPC UA server (`opc.tcp://localhost:4840/wastewater/`) before the MCP server or clients.
 
 ## 📝 Notes
 
-- Prefer `.env` files listed below for reproducible demos; never commit tenant secrets.
-- `sample/` data keeps demos deterministic when FMI/Nord Pool keys are unavailable.
-- The digital twin expects historical files under `digital-twin/opcua-server/data/`; regenerate Parquet via `parse_historical_data.py` when data updates.
+-   Prefer `.env` files listed below for reproducible demos; never commit tenant secrets.
+-   `sample/` data keeps demos deterministic when FMI/Nord Pool keys are unavailable.
+-   The digital twin expects historical files under `digital-twin/opcua-server/data/`; regenerate Parquet via `parse_historical_data.py` when data updates.
 
 ## 🤝 Contributing
 
-- Fork or branch from `main`, keep pull requests small, and attach screenshots/logs for UI or agent changes.
-- Run relevant unit tests (`pytest`, `npm run test`) plus linting before opening a PR.
-- Update documentation (`docs/*.md`, this README) whenever APIs, env vars, or workflows change.
+-   Fork or branch from `main`, keep pull requests small, and attach screenshots/logs for UI or agent changes.
+-   Run relevant unit tests (`pytest`, `npm run test`) plus linting before opening a PR.
+-   Update documentation (`docs/*.md`, this README) whenever APIs, env vars, or workflows change.
 
 ## 🔐 Configuration & Secrets
 
@@ -394,30 +613,30 @@ OPCUA_PORT=4840
 
 ## 🧬 Data, Models & Digital Twin
 
-- `digital-twin/opcua-server/parse_historical_data.py` ingests HSY-provided CSVs (`digital-twin/opcua-server/data/*.txt`) into Parquet for fast replay.
-- `digital-twin/opcua-server/opcua_server.py` streams rows through a namespace of pump variables while `digital-twin/mcp-server/mcp_server.py` exposes browse/read/write/history/aggregate tools over SSE for MCP clients.
-- `sample/` contains JSON fallbacks (`weather_fallback.json`, `market_price_fallback.json`) and Valmet metadata for demos without live integrations.
-- `simulation/` houses the reusable `PumpingSimulation`, `TunnelModel`, and fleet utilities that back both the optimizer and demo scripts.
-- `spot-price-forecast/` bundles notebooks (`notebooks/`), scripts (`script/main.py`), and trained model metadata (`models/consumption_forecast_model_info.json`) to bootstrap price forecasting research. Requires `FINGRID_API_KEY` as described in its README.
+-   `digital-twin/opcua-server/parse_historical_data.py` ingests HSY-provided CSVs (`digital-twin/opcua-server/data/*.txt`) into Parquet for fast replay.
+-   `digital-twin/opcua-server/opcua_server.py` streams rows through a namespace of pump variables while `digital-twin/mcp-server/mcp_server.py` exposes browse/read/write/history/aggregate tools over SSE for MCP clients.
+-   `sample/` contains JSON fallbacks (`weather_fallback.json`, `market_price_fallback.json`) and Valmet metadata for demos without live integrations.
+-   `simulation/` houses the reusable `PumpingSimulation`, `TunnelModel`, and fleet utilities that back both the optimizer and demo scripts.
+-   `spot-price-forecast/` bundles notebooks (`notebooks/`), scripts (`script/main.py`), and trained model metadata (`models/consumption_forecast_model_info.json`) to bootstrap price forecasting research. Requires `FINGRID_API_KEY` as described in its README.
 
 ## 🧪 Testing & QA
 
-- Backend: `pytest -q` (see `docs/TESTING.md` for coverage goals, scheduler tests, async fixtures).
-- Agents: add suites under `agents/tests/` exercising tool contracts (example patterns in `docs/TESTING.md`).
-- Frontend: configure Vitest/RTL for component coverage plus Playwright for E2E once endpoints stabilize.
-- Digital twin: use `digital-twin/test-clients/run.sh` to verify MCP and OPC UA endpoints prior to hooking them into the backend scheduler.
+-   Backend: `pytest -q` (see `docs/TESTING.md` for coverage goals, scheduler tests, async fixtures).
+-   Agents: add suites under `agents/tests/` exercising tool contracts (example patterns in `docs/TESTING.md`).
+-   Frontend: configure Vitest/RTL for component coverage plus Playwright for E2E once endpoints stabilize.
+-   Digital twin: use `digital-twin/test-clients/run.sh` to verify MCP and OPC UA endpoints prior to hooking them into the backend scheduler.
 
 ## 🗂️ Documentation Map
 
-- `docs/PRD.md` – product requirements, KPIs, and success metrics.
-- `docs/AGENT.md` – per-agent responsibilities, schemas, and TODOs.
-- `docs/BACKEND.md` – file-by-file FastAPI reference.
-- `docs/FRONTEND.md` – component inventory and layout guidance.
-- `docs/TESTING.md` – test strategy, commands, and CI recommendations.
-- `docs/CURL.md` – curated smoke-test commands for every public API.
-- `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
-- `DEPLOYMENT.md` – single-source guide for running the entire platform with `docker-compose.full.yml`.
-- `deploy/docker/README.md` – infrastructure-focused supplement (ports, scaling, production overrides).
+-   `docs/PRD.md` – product requirements, KPIs, and success metrics.
+-   `docs/AGENT.md` – per-agent responsibilities, schemas, and TODOs.
+-   `docs/BACKEND.md` – file-by-file FastAPI reference.
+-   `docs/FRONTEND.md` – component inventory and layout guidance.
+-   `docs/TESTING.md` – test strategy, commands, and CI recommendations.
+-   `docs/CURL.md` – curated smoke-test commands for every public API.
+-   `backend/DEBUGGING.md` – troubleshooting checklist for FastAPI + scheduler flows.
+-   `DEPLOYMENT.md` – single-source guide for running the entire platform with `docker-compose.full.yml`.
+-   `deploy/docker/README.md` – infrastructure-focused supplement (ports, scaling, production overrides).
 
 ## 🧭 Roadmap
 
