@@ -79,7 +79,6 @@ python -m agents.weather_agent.main
 python -m agents.weather_agent.server  # exposes POST /weather/forecast on :8101
 
 python -m agents.price_agent.main
-python -m agents.status_agent.main
 python -m agents.inflow_agent.main
 python -m agents.optimizer_agent.main
 ```
@@ -255,7 +254,6 @@ REDIS_URL=redis://localhost:6379/0
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/hsy
 WEATHER_AGENT_URL=http://localhost:8101
 PRICE_AGENT_URL=http://localhost:8102
-STATUS_AGENT_URL=http://localhost:8103
 INFLOW_AGENT_URL=http://localhost:8104
 OPTIMIZER_AGENT_URL=http://localhost:8105
 

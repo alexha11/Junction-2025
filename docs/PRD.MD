@@ -80,27 +80,18 @@ The system will be built using a modern, decoupled architecture:
   - Details: Fetches current and forecasted spot prices from Nord Pool.
   - Interface: Exposes as MCP tool.
 
-- **Agent 3: System Status & Physics Agent**
-
-  - Purpose: Provide current state and physical constraints of the plant.
-  - Functions:
-    - `get_current_system_state() -> dict` — Returns latest values for L1, F1, F2, and pump status.
-    - `get_tunnel_volume(level: float) -> float` — Calculates tunnel volume.
-    - `get_pump_efficiency(pump_id: str, flow: float, head: float) -> float` — Calculates pump efficiency.
-  - Interface: All functions as MCP tools.
-
-- **Agent 4: Inflow Forecast Agent**
+- **Agent 3: Inflow Forecast Agent**
 
   - Purpose: Predict near-term wastewater inflow (F1).
   - Function: `predict_inflow(weather_data: list, lookahead_hours: int) -> list[dict]`
   - Details: Simple ML/statistical model trained on Hackathon_HSY_data.csv.
   - Interface: Exposes as MCP tool.
 
-- **Agent 5: Optimization Agent (Coordinator)**
+- **Agent 4: Optimization Agent (Coordinator)**
   - Purpose: Central "brain," orchestrates other agents to create optimal pump schedule.
   - Workflow (every 15 min):
     1. **Context Gathering:** Calls tools from other agents:
-       - `get_current_system_state()`
+       - `get_current_system_state()` (via Backend API / Digital Twin)
        - `get_precipitation_forecast(lookahead_hours=12)`
        - `get_electricity_price_forecast(lookahead_hours=12)`
     2. **Prediction:** Calls `predict_inflow()` using weather data.
@@ -116,8 +107,9 @@ The system will be built using a modern, decoupled architecture:
 
 ### FR3: Simulation Integration
 
-- System Status Agent reads data from simulator.
-- Optimization Agent's schedule is fed into simulator to validate performance and ensure no constraint breaches.
+- Digital Twin (OPC UA) provides real-time system state and historical data.
+- Backend API reads from Digital Twin and exposes system state to Optimization Agent.
+- Optimization Agent's schedule is written back to Digital Twin via Backend API to validate performance and ensure no constraint breaches.
 
 ---
 
