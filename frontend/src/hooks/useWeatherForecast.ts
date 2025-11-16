@@ -12,8 +12,7 @@ interface Params {
 }
 
 const FALLBACK_LOCATION = "Helsinki";
-const WEATHER_AGENT_URL =
-  import.meta.env.VITE_WEATHER_AGENT_URL ?? "/api/weather/forecast";
+const WEATHER_AGENT_URL = "https://hsy-backend-524386263600.europe-west1.run.app/weather/forecast";
 
 const resolveUrl = (target: string) => {
   if (target.startsWith("http")) {

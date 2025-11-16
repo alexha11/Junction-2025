@@ -5,7 +5,8 @@ FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    VENV_PATH="/opt/venv"
+    VENV_PATH="/opt/venv" \
+    DEFAULT_OPCUA_SERVER_URL="opc.tcp://135.125.143.85:4840/wastewater/"
 
 WORKDIR /workspace
 

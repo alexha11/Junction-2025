@@ -53,6 +53,7 @@ def create_app() -> FastAPI:
             "http://localhost:3000",  # Alternative frontend port
             "http://127.0.0.1:5173",
             "http://127.0.0.1:3000",
+            "*",  # Allow all origins for development (can be restricted in production)
         ],
         allow_credentials=True,
         allow_methods=["*"],

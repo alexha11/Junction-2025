@@ -12,8 +12,9 @@ from app.services.digital_twin_adapter import DigitalTwinAdapter
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OPCUA_SERVER_URL = "opc.tcp://localhost:4840/wastewater/"
-OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", DEFAULT_OPCUA_SERVER_URL)
+# Default OPC UA server URL (use localhost for local development, or set via environment variable)
+DEFAULT_OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", "opc.tcp://localhost:4840/wastewater/")
+OPCUA_SERVER_URL = DEFAULT_OPCUA_SERVER_URL
 DEFAULT_MCP_SERVER_URL = "http://localhost:8080"
 
 
