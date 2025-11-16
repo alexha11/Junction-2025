@@ -329,65 +329,36 @@ const OperationsPortal = () => {
   }, [state?.pumps]);
 
   // Speak out explanation when it changes (only if it's not the default fallback)
-  // Only play sound when at least 1 pump is open
+  // Auto-play when content changes
   useEffect(() => {
     const explanation = schedule?.justification;
     if (!explanation || explanation === "Optimized pump schedule based on current conditions.") {
       return;
     }
     
-    // Only speak if at least one pump is active and this is a new explanation
-    if (!hasActivePump(state?.pumps)) {
-      return;
-    }
-    
+    // Only speak if this is a new explanation (different from last spoken)
     if (explanation !== lastSpokenExplanation.current) {
       lastSpokenExplanation.current = explanation;
+      // Play explanation automatically
       safePlayText(`Explanation: ${explanation}`);
     }
-  }, [schedule?.justification, state?.pumps]);
+  }, [schedule?.justification]);
 
   // Speak out strategy when it changes
-  // Only play sound when at least 1 pump is open
+  // Auto-play when content changes
   useEffect(() => {
     const strategy = schedule?.strategy;
     if (!strategy) {
       return;
     }
     
-    // Only speak if at least one pump is active and this is a new strategy
-    if (!hasActivePump(state?.pumps)) {
-      return;
-    }
-    
+    // Only speak if this is a new strategy (different from last spoken)
     if (strategy !== lastSpokenStrategy.current) {
       lastSpokenStrategy.current = strategy;
+      // Play strategy automatically
       safePlayText(`Strategy: ${strategy}`);
     }
-  }, [schedule?.strategy, state?.pumps]);
-
-  // Manual play audio handler
-  const handlePlayAudio = async () => {
-    const explanation = schedule?.justification;
-    const strategy = schedule?.strategy;
-    
-    if (!explanation && !strategy) {
-      console.log("No content to play");
-      return;
-    }
-    
-    // Play explanation first if available
-    if (explanation && explanation !== "Optimized pump schedule based on current conditions.") {
-      await safePlayText(`Explanation: ${explanation}`);
-      // Small delay between messages
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    // Then play strategy if available
-    if (strategy) {
-      await safePlayText(`Strategy: ${strategy}`);
-    }
-  };
+  }, [schedule?.strategy]);
 
   return (
     <div className="space-y-6">
@@ -450,7 +421,7 @@ const OperationsPortal = () => {
           <ForecastPanel inflow={inflow} prices={price} />
         </div>
         <div className="space-y-6">
-          <RecommendationPanel schedule={schedule} loading={false} onPlayAudio={handlePlayAudio} />
+          <RecommendationPanel schedule={schedule} loading={false} />
           <AlertsBanner alerts={alerts} />
           <OverridePanel />
           <DeliveryChecklist />
