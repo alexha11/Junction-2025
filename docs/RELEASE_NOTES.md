@@ -15,15 +15,15 @@ This release bundles every component required to run the HSY Blominmäki optimiz
 
 ## 2. Component Matrix
 
-| Area            | Version / Location            | Notes |
-| --------------- | ----------------------------- | ----- |
-| Backend API     | `backend/app`                 | FastAPI 0.115+, APScheduler-driven optimizer loop.
-| MCP Agents      | `agents/`                     | Weather, price, inflow, status, optimizer (HTTP + MCP).
-| Frontend        | `frontend/`                   | React 18, Vite dev server + NGINX production image.
-| Digital Twin    | `digital-twin/opcua-server`, `digital-twin/mcp-server` | Replay HSY telemetry via OPC UA + MCP bridge.
-| Deployment      | `docker-compose.full.yml`, `DEPLOYMENT.md`, `deploy/docker/README.md` | Full stack orchestrated with optional Postgres/Redis.
-| Simulation Core | `simulation/`                 | Pump/tunnel models shared across agents & backend.
-| Research Tools  | `spot-price-forecast/`        | Nord Pool modeling notebooks and scripts.
+| Area            | Version / Location                                                    | Notes                                                   |
+| --------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
+| Backend API     | `backend/app`                                                         | FastAPI 0.115+, APScheduler-driven optimizer loop.      |
+| MCP Agents      | `agents/`                                                             | Weather, price, inflow, status, optimizer (HTTP + MCP). |
+| Frontend        | `frontend/`                                                           | React 18, Vite dev server + NGINX production image.     |
+| Digital Twin    | `digital-twin/opcua-server`, `digital-twin/mcp-server`                | Replay HSY telemetry via OPC UA + MCP bridge.           |
+| Deployment      | `docker-compose.full.yml`, `DEPLOYMENT.md`, `deploy/docker/README.md` | Full stack orchestrated with optional Postgres/Redis.   |
+| Simulation Core | `simulation/`                                                         | Pump/tunnel models shared across agents & backend.      |
+| Research Tools  | `spot-price-forecast/`                                                | Nord Pool modeling notebooks and scripts.               |
 
 ## 3. Release Highlights
 
@@ -40,12 +40,12 @@ This release bundles every component required to run the HSY Blominmäki optimiz
 
 ## 5. Prerequisites & Compatibility
 
-| Component  | Requirement |
-| ---------- | ----------- |
-| Python     | 3.12+ for backend/agents/digital-twin tooling. |
-| Node.js    | 20+ for the frontend. |
-| Docker     | Engine 24+ / Compose V2 for the full stack. |
-| Hardware   | 8 GB RAM (16 GB recommended) + 4 CPU cores when running all services concurrently. |
+| Component     | Requirement                                                                         |
+| ------------- | ----------------------------------------------------------------------------------- |
+| Python        | 3.12+ for backend/agents/digital-twin tooling.                                      |
+| Node.js       | 20+ for the frontend.                                                               |
+| Docker        | Engine 24+ / Compose V2 for the full stack.                                         |
+| Hardware      | 8 GB RAM (16 GB recommended) + 4 CPU cores when running all services concurrently.  |
 | External APIs | Optional keys: `OPENWEATHER_API_KEY`, Nord Pool credentials, Featherless LLM token. |
 
 ## 6. Deployment Checklist
@@ -69,13 +69,13 @@ Additional details live in `DEPLOYMENT.md` and `deploy/docker/README.md` (port o
 
 ## 7. Validation Matrix
 
-| Area      | Command / File                              | Status |
-| --------- | ------------------------------------------- | ------ |
-| Backend   | `cd backend && pytest -q`                    | Run before tagging release. |
-| Frontend  | `cd frontend && npm run build`              | Ensures Vite/NGINX bundle compiles. |
-| Agents    | Manual smoke: `python -m agents.weather_agent.server` etc. | Confirmed deterministic responses. |
-| Digital Twin | `cd digital-twin && docker compose up --build` | Validates OPC UA + MCP bridge wiring. |
-| Full Stack | `docker compose -f docker-compose.full.yml up -d` | Verified on Linux host. |
+| Area         | Command / File                                             | Status                                |
+| ------------ | ---------------------------------------------------------- | ------------------------------------- |
+| Backend      | `cd backend && pytest -q`                                  | Run before tagging release.           |
+| Frontend     | `cd frontend && npm run build`                             | Ensures Vite/NGINX bundle compiles.   |
+| Agents       | Manual smoke: `python -m agents.weather_agent.server` etc. | Confirmed deterministic responses.    |
+| Digital Twin | `cd digital-twin && docker compose up --build`             | Validates OPC UA + MCP bridge wiring. |
+| Full Stack   | `docker compose -f docker-compose.full.yml up -d`          | Verified on Linux host.               |
 
 ## 8. Known Issues & Mitigations
 
