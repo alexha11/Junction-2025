@@ -81,8 +81,12 @@ const clamp01 = (value?: number) => {
 const getNow = () =>
   typeof performance !== "undefined" ? performance.now() : Date.now();
 
-const getPumpSize = (id?: string): PumpSize =>
-  isBoosterPump(id) ? "small" : "large";
+const getPumpSize = (id?: string): PumpSize => {
+  // Pumps 1.1 and 2.1 are small, all others are large
+  if (!id) return "large";
+  const pumpId = id.replace('P', ''); // Remove 'P' prefix if present
+  return (pumpId === '1.1' || pumpId === '2.1') ? "small" : "large";
+};
 interface PumpNodeProps {
   pump: PumpVisual;
   position: [number, number, number];
@@ -145,14 +149,14 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
 
   return (
     <group position={position}>
-      {/* Base ring with enhanced glow */}
+      {/* Base ring with enhanced glow - brighter when active */}
       <mesh position={[0, -0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[radius + 0.1, radius + 0.45, 48]} />
         <meshStandardMaterial
           color={pump.accent}
           emissive={pump.accent}
-          emissiveIntensity={pump.health === "active" ? 0.4 : 0.15}
-          opacity={0.75}
+          emissiveIntensity={pump.health === "active" ? 0.8 : pump.health === "fault" ? 0.3 : 0.15}
+          opacity={pump.health === "active" ? 0.9 : 0.75}
           transparent
         />
       </mesh>
@@ -201,12 +205,12 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
         </mesh>
       </group>
       
-      {/* Enhanced beacon with power-based glow */}
+      {/* Enhanced beacon with power-based glow - pulsing when active */}
       <mesh ref={beaconRef} position={[0, towerHeight + 0.35, 0]}>
         <sphereGeometry args={[beaconSize, 16, 16]} />
         <meshBasicMaterial 
-          color={pump.accent} 
-          opacity={pump.health === "active" ? 0.7 : 0.3} 
+          color={pump.health === "active" ? "#22d3ee" : pump.health === "fault" ? "#fb7185" : pump.accent} 
+          opacity={pump.health === "active" ? 0.9 : pump.health === "fault" ? 0.6 : 0.3} 
           transparent 
         />
       </mesh>
@@ -214,21 +218,46 @@ const PumpNode: FC<PumpNodeProps> = ({ pump, position, index }) => {
       {/* Power indicator (small particles around active pumps) */}
       {pump.health === "active" && pump.power > 0 && (
         <Sparkles
-          count={Math.floor(pump.power / 50)}
-          size={1.5}
-          scale={[radius * 2, towerHeight * 0.5, radius * 2]}
+          count={Math.floor(pump.power / 50) + 3}
+          size={1.8}
+          scale={[radius * 2.5, towerHeight * 0.6, radius * 2.5]}
           position={[0, towerHeight * 0.5, 0]}
-          speed={0.3 + (pump.frequency / 50) * 0.5}
-          color={pump.accent}
+          speed={0.4 + (pump.frequency / 50) * 0.6}
+          color="#22d3ee"
         />
       )}
       
+      {/* Water flow indicator - visible stream when pump is active */}
+      {pump.health === "active" && (
+        <mesh position={[0, towerHeight * 0.3, 0]}>
+          <cylinderGeometry args={[radius * 0.3, radius * 0.3, towerHeight * 0.4, 8]} />
+          <meshStandardMaterial
+            color="#22d3ee"
+            emissive="#22d3ee"
+            emissiveIntensity={0.6}
+            opacity={0.5}
+            transparent
+          />
+        </mesh>
+      )}
+      
       <Html center distanceFactor={18} position={[0, 1.8, 0]}>
-        <div className="rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-100 shadow-lg">
+        <div className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide shadow-lg ${
+          pump.health === "active" 
+            ? "border-green-500/50 bg-green-500/20 text-green-100" 
+            : pump.health === "fault"
+            ? "border-red-500/50 bg-red-500/20 text-red-100"
+            : "border-white/10 bg-slate-900/80 text-slate-100"
+        }`}>
           {pump.id}
           {pump.health === "active" && (
-            <span className="ml-1.5 text-[9px] text-slate-400">
+            <span className="ml-1.5 text-[9px] text-green-300">
               {pump.frequency.toFixed(0)}Hz
+            </span>
+          )}
+          {pump.health === "fault" && (
+            <span className="ml-1.5 text-[9px] text-red-300">
+              FAULT
             </span>
           )}
         </div>
@@ -296,34 +325,64 @@ const TunnelLevelIndicator: FC<{ unit: WastewaterUnitVisual; level?: number }> =
   );
 };
 
-const ChannelBase: FC<{ length: number; width: number }> = ({
-  length,
-  width,
-}) => (
-  <mesh position={[0, -0.45, 0]} receiveShadow>
-    <boxGeometry args={[length, 0.2, width + 3]} />
-    <meshStandardMaterial color="#020b17" roughness={0.7} metalness={0.05} />
-  </mesh>
-);
-
-const TunnelWater: FC<{ ratio: number; length: number; width: number }> = ({
-  ratio,
-  length,
-  width,
-}) => {
-  const height = 0.9 * clamp01(ratio);
+const TunnelStructure: FC<{ 
+  position: [number, number, number];
+  level: number;
+  id: string;
+  length?: number;
+  width?: number;
+  height?: number;
+}> = ({ position, level, id, length = 3.5, width = 1.8, height = 1.2 }) => {
+  const normalizedLevel = id === "L2" ? 1.0 : clamp01(level / 8.0);
+  const waterHeight = (height * 0.7) * normalizedLevel;
+  
   return (
-    <mesh position={[0, -0.1 + height / 2, 0]}>
-      <boxGeometry args={[length - 0.4, height, width - 0.2]} />
-      <meshPhysicalMaterial
-        color="#22d3ee"
-        transparent
-        opacity={0.25 + clamp01(ratio) * 0.35}
-        roughness={0.15}
-        metalness={0.1}
-        transmission={0.3}
-      />
-    </mesh>
+    <group position={position}>
+      {/* Tunnel base/structure */}
+      <mesh position={[0, -0.5, 0]} receiveShadow>
+        <boxGeometry args={[length, 0.2, width]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.1} />
+      </mesh>
+      
+      {/* Tunnel walls */}
+      <mesh position={[0, -0.2 + height/2, -width/2]} receiveShadow>
+        <boxGeometry args={[length, height, 0.15]} />
+        <meshStandardMaterial color="#0f172a" roughness={0.6} metalness={0.2} />
+      </mesh>
+      <mesh position={[0, -0.2 + height/2, width/2]} receiveShadow>
+        <boxGeometry args={[length, height, 0.15]} />
+        <meshStandardMaterial color="#0f172a" roughness={0.6} metalness={0.2} />
+      </mesh>
+      
+      {/* Tunnel top */}
+      <mesh position={[0, -0.2 + height, 0]} receiveShadow>
+        <boxGeometry args={[length, 0.15, width]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.7} metalness={0.1} />
+      </mesh>
+      
+      {/* Water inside tunnel */}
+      <mesh position={[0, -0.4 + waterHeight / 2, 0]}>
+        <boxGeometry args={[length - 0.2, waterHeight, width - 0.2]} />
+        <meshPhysicalMaterial
+          color={id === "L1" ? "#22d3ee" : "#60a5fa"}
+          transparent
+          opacity={0.3 + normalizedLevel * 0.4}
+          roughness={0.1}
+          metalness={0.05}
+          transmission={0.4}
+        />
+      </mesh>
+      
+      {/* Tunnel entrance/exit indicators */}
+      <mesh position={[-length/2, -0.2 + height/2, 0]} receiveShadow>
+        <cylinderGeometry args={[width/2, width/2, height, 16]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.6} metalness={0.2} />
+      </mesh>
+      <mesh position={[length/2, -0.2 + height/2, 0]} receiveShadow>
+        <cylinderGeometry args={[width/2, width/2, height, 16]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.6} metalness={0.2} />
+      </mesh>
+    </group>
   );
 };
 
@@ -474,13 +533,13 @@ const System3DScene: FC<System3DSceneProps> = ({
         id: "L1",
         loadFactor: l1Normalized,
         color: l1Normalized > 0.7 ? "#f472b6" : l1Normalized > 0.4 ? "#a5b4fc" : "#60a5fa",
-        position: [-6.5, 0, 0] as [number, number, number], // Left side (inlet)
+        position: [0, -2.5, 0] as [number, number, number], // L1 at bottom (vertically lower)
       },
       {
         id: "L2",
         loadFactor: l2Normalized,
         color: "#60a5fa", // Always at 30m, use consistent blue color
-        position: [6.5, 0, 0] as [number, number, number], // Right side (outlet)
+        position: [0, 3.5, 0] as [number, number, number], // L2 on top (biggest)
       },
     ];
   }, [tunnelLevelL1, inflow]);
@@ -503,12 +562,12 @@ const System3DScene: FC<System3DSceneProps> = ({
   const tunnelFillPercent = Math.round(normalizedFill * 100);
 
   // Flow indicators for F1 and F2
-  const f1Position: [number, number, number] = [-8, 0.5, 0];
-  const f2Position: [number, number, number] = [8, 0.5, 0];
+  const f1Position: [number, number, number] = [-5, -2.5, 0];
+  const f2Position: [number, number, number] = [5, 3.5, 0];
 
   return (
     <div className="relative h-96 w-full overflow-hidden rounded-2xl border border-white/5 bg-gradient-to-br from-slate-950 via-slate-900 to-black">
-      <Canvas shadows camera={{ position: [0, 8, 14], fov: 45 }} dpr={[1, 2]}>
+      <Canvas shadows camera={{ position: [0, 6, 12], fov: 50 }} dpr={[1, 2]}>
         <color attach="background" args={["#01030a"]} />
         <ambientLight intensity={0.45} />
         <directionalLight
@@ -539,33 +598,57 @@ const System3DScene: FC<System3DSceneProps> = ({
             sectionColor="#0f172a"
             cellColor="#1d2538"
           />
-          <ChannelBase length={13} width={1.6} />
-          <TunnelWater
-            ratio={tunnelFillRatio ?? 0.45}
-            length={12.4}
-            width={1.3}
+          
+          {/* L1 Tunnel (bottom, medium size) */}
+          <TunnelStructure
+            position={[0, -2.5, 0]}
+            level={tunnelLevelL1 ?? 0}
+            id="L1"
+            length={4.0}
+            width={2.0}
+            height={1.2}
           />
+          
+          {/* L2 Tunnel (top, biggest) */}
+          <TunnelStructure
+            position={[0, 3.5, 0]}
+            level={30.0}
+            id="L2"
+            length={5.5}
+            width={2.8}
+            height={1.8}
+          />
+          
+          {/* Connection pipes from L1 to pump area (vertical risers going up) */}
+          <mesh position={[-2.5, -1.5, 0]}>
+            <boxGeometry args={[0.15, 2.5, 0.15]} />
+            <meshStandardMaterial color="#38bdf8" opacity={0.5} transparent />
+          </mesh>
+          <mesh position={[2.5, -1.5, 0]}>
+            <boxGeometry args={[0.15, 2.5, 0.15]} />
+            <meshStandardMaterial color="#38bdf8" opacity={0.5} transparent />
+          </mesh>
+          
+          {/* Connection pipes from pump area to L2 (vertical risers going up) */}
+          <mesh position={[4.5, 1.5, 0]}>
+            <boxGeometry args={[0.15, 2.0, 0.15]} />
+            <meshStandardMaterial color="#f472b6" opacity={0.5} transparent />
+          </mesh>
+          <mesh position={[-4.5, 1.5, 0]}>
+            <boxGeometry args={[0.15, 2.0, 0.15]} />
+            <meshStandardMaterial color="#f472b6" opacity={0.5} transparent />
+          </mesh>
+          
+          {/* Sparkles for visual effect */}
           <Sparkles
-            count={25}
-            size={2.5}
-            scale={[12, 0.3, 1.2]}
+            count={20}
+            size={2}
+            scale={[14, 0.3, 1.5]}
             position={[0, 0, 0]}
             speed={0.3}
             color="#22d3ee"
           />
-          <mesh position={[0, -0.35, 0]}>
-            <boxGeometry args={[12.8, 0.05, 0.2]} />
-            <meshStandardMaterial color="#1e293b" />
-          </mesh>
-          <mesh position={[0, -0.35, 0]}>
-            <boxGeometry args={[0.2, 0.05, 4.8]} />
-            <meshStandardMaterial color="#1e293b" />
-          </mesh>
-          {/* Inlet pipe from L1 to pump columns */}
-          <mesh position={[-4.5, -0.25, 0]}>
-            <boxGeometry args={[2, 0.1, 0.12]} />
-            <meshStandardMaterial color="#38bdf8" opacity={0.4} transparent />
-          </mesh>
+          
           {/* Vertical risers from main pipe to pump columns */}
           <mesh position={[-2.5, -0.25, -3]}>
             <boxGeometry args={[0.12, 0.1, 6]} />
@@ -579,11 +662,6 @@ const System3DScene: FC<System3DSceneProps> = ({
           {/* Common discharge header (vertical pipe on right side) */}
           <mesh position={[4.5, -0.25, 0]}>
             <boxGeometry args={[0.12, 0.1, 6]} />
-            <meshStandardMaterial color="#f472b6" opacity={0.5} transparent />
-          </mesh>
-          {/* Horizontal discharge pipe from header to L2 */}
-          <mesh position={[5.5, -0.25, 0]}>
-            <boxGeometry args={[1, 0.1, 0.12]} />
             <meshStandardMaterial color="#f472b6" opacity={0.5} transparent />
           </mesh>
           
@@ -655,64 +733,86 @@ const System3DScene: FC<System3DSceneProps> = ({
               level={unit.id === "L1" ? (tunnelLevelL1 ?? 0) : 30.0} 
             />
           ))}
-          {/* F1 (inlet) flow to L1 */}
+          {/* F1 (inlet) flow to L1 tunnel (from left side) */}
           <FlowBridge
-            start={[-8, 0.5, 0]}
-            end={[-6.5, 0.5, 0]}
+            start={[-5, -2.5, 0]}
+            end={[-2, -2.5, 0]}
             color="#38bdf8"
           />
           <FlowPulse
-            start={[-8, 0.5, 0]}
-            end={[-6.5, 0.5, 0]}
+            start={[-5, -2.5, 0]}
+            end={[-2, -2.5, 0]}
             color="#38bdf8"
             speed={0.5}
           />
           
-          {/* Flow from L1 to pump columns */}
-          <FlowPulse
-            start={[-6.5, 0.1, 0]}
-            end={[-4.5, -0.25, 0]}
-            color="#38bdf8"
-            speed={0.4}
-          />
-          
-          {/* Flow from pumps through common header to L2 */}
+          {/* Flow from L1 tunnel to active pumps (vertical up through risers) */}
           {pumpVisuals.map((pump, index) => {
             if (pump.health !== "active") return null;
             const pos = pumpPositions[index];
+            const isGroup1 = pump.id.startsWith('1.');
+            const riserX = isGroup1 ? -2.5 : 2.5;
+            
+            // Flow from L1 through riser to pump
             return (
               <FlowPulse
-                key={`pump-flow-${pump.id}`}
+                key={`l1-to-pump-${pump.id}`}
+                start={[riserX, -1.9, 0]}
+                end={[pos[0], 0.1, pos[2]]}
+                color="#38bdf8"
+                speed={0.4 + (pump.frequency / 50) * 0.2}
+                offset={index * 0.2}
+              />
+            );
+          })}
+          
+          {/* Flow from active pumps through common header to L2 tunnel (vertical up) */}
+          {pumpVisuals.map((pump, index) => {
+            if (pump.health !== "active") return null;
+            const pos = pumpPositions[index];
+            const isGroup1 = pump.id.startsWith('1.');
+            const headerX = isGroup1 ? -4.5 : 4.5;
+            
+            // Flow from pump to header
+            return (
+              <FlowPulse
+                key={`pump-to-header-${pump.id}`}
                 start={[pos[0], 0.1, pos[2]]}
-                end={[4.5, -0.25, pos[2]]}
+                end={[headerX, 0.1, pos[2]]}
                 color={pump.accent}
-                speed={0.3 + (index % 3) * 0.1}
+                speed={0.3 + (pump.frequency / 50) * 0.3}
                 offset={index * 0.15}
               />
             );
           })}
           
-          {/* Flow from common header to L2 and F2 */}
-          <FlowPulse
-            start={[4.5, -0.25, 0]}
-            end={[6.5, 0.1, 0]}
-            color="#f472b6"
-            speed={0.4}
-          />
+          {/* Flow from common headers up to L2 tunnel (only if pumps are active) */}
+          {pumpVisuals.some(p => p.health === "active" && p.id.startsWith('2.')) && (
+            <FlowPulse
+              start={[4.5, 0.1, 0]}
+              end={[2, 2.5, 0]}
+              color="#f472b6"
+              speed={0.4}
+            />
+          )}
+          {pumpVisuals.some(p => p.health === "active" && p.id.startsWith('1.')) && (
+            <FlowPulse
+              start={[-4.5, 0.1, 0]}
+              end={[-2, 2.5, 0]}
+              color="#f472b6"
+              speed={0.4}
+            />
+          )}
+          
+          {/* F2 (outlet) flow from L2 tunnel (to right side) */}
           <FlowBridge
-            start={[6.5, 0.1, 0]}
-            end={[6.5, 0.5, 0]}
-            color="#f472b6"
-          />
-          {/* F2 (outlet) flow from L2 */}
-          <FlowBridge
-            start={[6.5, 0.5, 0]}
-            end={[8, 0.5, 0]}
+            start={[2.5, 3.5, 0]}
+            end={[5, 3.5, 0]}
             color="#f472b6"
           />
           <FlowPulse
-            start={[6.5, 0.5, 0]}
-            end={[8, 0.5, 0]}
+            start={[2.5, 3.5, 0]}
+            end={[5, 3.5, 0]}
             color="#f472b6"
             speed={0.5}
           />
