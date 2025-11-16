@@ -83,7 +83,7 @@ const ProofDashboard = () => {
 		// Get system state
 		const fetchState = async () => {
 			try {
-				const response = await fetch("/api/system/state");
+				const response = await fetch("https://hsy-backend-524386263600.europe-west1.run.app/system/state");
 				if (!response.ok) {
 					throw new Error(`HTTP error! status: ${response.status}`);
 				}

@@ -56,14 +56,14 @@ const fetchJSON = async <T>(url: string): Promise<T> => {
 export const useSystemState = () =>
 	useQuery<SystemState>({
 		queryKey: ["system-state"],
-		queryFn: () => fetchJSON<SystemState>("/api/system/state"),
+		queryFn: () => fetchJSON<SystemState>("https://hsy-backend-524386263600.europe-west1.run.app/system/state"),
 		refetchInterval: 30_000,
 	});
 
 export const useSystemForecasts = () =>
 	useQuery<ForecastSeries[]>({
 		queryKey: ["system-forecasts"],
-		queryFn: () => fetchJSON<ForecastSeries[]>("/api/system/forecasts"),
+		queryFn: () => fetchJSON<ForecastSeries[]>("https://hsy-backend-524386263600.europe-west1.run.app/system/forecasts"),
 		staleTime: 60_000,
 	});
 
@@ -71,6 +71,6 @@ export const useScheduleRecommendation = () =>
 	useQuery<ScheduleRecommendation>({
 		queryKey: ["system-schedule"],
 		queryFn: () =>
-			fetchJSON<ScheduleRecommendation>("/api/system/schedule"),
+			fetchJSON<ScheduleRecommendation>("https://hsy-backend-524386263600.europe-west1.run.app/system/schedule"),
 		refetchInterval: 60_000,
 	});
