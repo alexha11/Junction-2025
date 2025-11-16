@@ -135,7 +135,7 @@ class AgentsCoordinator:
         print("Pumps State:", pumps)
 
         return SystemState(
-            timestamp=twin_cur_state.get("SimulationTime", "N/A"),
+            timestamp=self._resolve_timestamp(twin_cur_state.get("SimulationTime")),
             tunnel_level_l2_m=twin_cur_state.get("WaterLevelInTunnel.L2.m", 0.0),
             tunnel_water_volume_l1_m3=twin_cur_state.get(
                 "WaterVolumeInTunnel.L1.m3", 0.0
@@ -520,3 +520,30 @@ class AgentsCoordinator:
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
+
+    def _resolve_timestamp(self, raw_value) -> datetime:
+        if isinstance(raw_value, datetime):
+            if raw_value.tzinfo is not None:
+                return raw_value.astimezone(timezone.utc).replace(tzinfo=None)
+            return raw_value
+        if isinstance(raw_value, str):
+            try:
+                return self._parse_iso_timestamp(raw_value)
+            except Exception:
+                self._logger.warning(
+                    "Invalid SimulationTime timestamp=%s; defaulting to now", raw_value
+                )
+        if isinstance(raw_value, (int, float)):
+            try:
+                return datetime.fromtimestamp(raw_value, tz=timezone.utc).replace(
+                    tzinfo=None
+                )
+            except Exception:
+                self._logger.warning(
+                    "Failed to convert numeric SimulationTime=%s; defaulting to now",
+                    raw_value,
+                )
+        self._logger.warning(
+            "Digital twin state missing SimulationTime; defaulting to current UTC time"
+        )
+        return datetime.utcnow()

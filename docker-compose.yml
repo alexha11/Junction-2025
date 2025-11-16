@@ -11,21 +11,18 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OPTIMIZER_INTERVAL_MINUTES: ${OPTIMIZER_INTERVAL_MINUTES:-15}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/hsy}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       WEATHER_AGENT_URL: ${WEATHER_AGENT_URL:-http://host.docker.internal:8101}
       PRICE_AGENT_URL: ${PRICE_AGENT_URL:-http://host.docker.internal:8102}
       STATUS_AGENT_URL: ${STATUS_AGENT_URL:-http://host.docker.internal:8103}
       INFLOW_AGENT_URL: ${INFLOW_AGENT_URL:-http://host.docker.internal:8104}
       OPTIMIZER_AGENT_URL: ${OPTIMIZER_AGENT_URL:-http://host.docker.internal:8105}
+      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/workspace/backend
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      - postgres
-      - redis
     restart: unless-stopped
     healthcheck:
       test:
@@ -34,6 +31,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    depends_on:
+      - opcua-server
 
   frontend:
     build:
@@ -49,37 +48,28 @@ services:
       - backend
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16-alpine
-    container_name: hsy-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-hsy}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  opcua-server:
+    build:
+      context: ./digital-twin/opcua-server
+      dockerfile: Dockerfile
+    image: hsy-opcua-server:latest
+    container_name: hsy-opcua-server
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "${OPCUA_PORT:-4840}:4840"
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: hsy-redis
-    command: redis-server --save 20 1 --loglevel warning
+  mcp-server:
+    build:
+      context: ./digital-twin/mcp-server
+      dockerfile: Dockerfile
+    image: hsy-mcp-server:latest
+    container_name: hsy-mcp-server
+    environment:
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8080}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - "${MCP_PORT:-8080}:8080"
+    depends_on:
+      - opcua-server
     restart: unless-stopped
 
 networks:
@@ -88,4 +78,3 @@ networks:
 
 volumes:
   postgres_data:
-  redis_data:
