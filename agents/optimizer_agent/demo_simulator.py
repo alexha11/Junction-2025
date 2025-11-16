@@ -588,13 +588,34 @@ class DemoSimulator:
                         explanation = None
                         strategy = None
                 
+                # Update current_state.pump_states with optimization results (time_step=0 = current step)
+                # This ensures the first message shows pumps that should be ON after optimization
+                if opt_result.success and opt_result.schedules:
+                    optimized_pump_states = {}
+                    for schedule in opt_result.schedules:
+                        if schedule.time_step == 0:  # Only current step
+                            optimized_pump_states[schedule.pump_id] = (
+                                schedule.pump_id,
+                                schedule.is_on,
+                                schedule.frequency_hz
+                            )
+                    
+                    # Update pump states in current_state to reflect optimization results
+                    updated_pump_states = []
+                    for pump_id, _, _ in current_state.pump_states:
+                        if pump_id in optimized_pump_states:
+                            updated_pump_states.append(optimized_pump_states[pump_id])
+                        else:
+                            updated_pump_states.append((pump_id, False, 0.0))
+                    current_state.pump_states = updated_pump_states
+                
                 # Get baseline schedule
                 baseline_schedule = self.data_loader.get_baseline_schedule_at_time(current_time)
                 
                 # Create simulation result with LLM-generated content
                 result = SimulationResult(
                     timestamp=current_time,
-                    current_state=current_state,  # Required field
+                    current_state=current_state,  # Required field (now includes optimized pump states)
                     optimization_result=opt_result,
                     baseline_schedule=baseline_schedule,
                     explanation=explanation,  # LLM explanation

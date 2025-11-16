@@ -160,7 +160,8 @@ async def _run_simulation_background(
         if not start_dt or not end_dt:
             data_start, data_end = data_loader.get_data_range()
             start_dt = start_dt or data_start
-            end_dt = end_dt or (start_dt.replace(hour=23, minute=59, second=59) if not end_dt else end_dt)
+            # Default end_time to the end of the data file
+            end_dt = end_dt or data_end
         
         # Validate time range
         if end_dt <= start_dt:

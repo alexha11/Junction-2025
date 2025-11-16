@@ -57,7 +57,7 @@ export function useDemoSimulator() {
       clearInterval(pollingIntervalRef.current);
     }
 
-    // Poll every 15 seconds
+    // Poll every 5 seconds
     pollingIntervalRef.current = window.setInterval(async () => {
       try {
         const response = await fetch(`${apiUrl}/system/demo/simulate/status`);
@@ -158,7 +158,7 @@ export function useDemoSimulator() {
         console.error('❌ Failed to poll status:', e);
         setError(`Failed to poll status: ${e instanceof Error ? e.message : 'Unknown error'}`);
       }
-    }, 15000); // Poll every 15 seconds
+    }, 5000); // Poll every 5 seconds
   }, [apiUrl]);
 
   const connect = useCallback(async (options: SimulatorOptions = {}) => {
