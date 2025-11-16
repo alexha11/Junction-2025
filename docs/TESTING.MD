@@ -117,11 +117,11 @@ Use direct function calls until real MCP bindings exist. When swapping to the Ag
 
 ### 3.3 Simulator-in-the-loop Tests
 
-When the System Status Agent connects to the HSY simulator, add async tests that:
+When the Digital Twin (OPC UA) is available, add async tests that:
 
-1. Seed the simulator with deterministic inflow/time-of-day data.
-2. Call `get_current_system_state()` and assert the response matches simulator telemetry.
-3. Run an end-to-end optimization step and feed the schedule back into the simulator to ensure constraint compliance.
+1. Seed the Digital Twin with deterministic inflow/time-of-day data.
+2. Call `GET /system/state` via Backend API and assert the response matches Digital Twin telemetry.
+3. Run an end-to-end optimization step and write the schedule back to Digital Twin via `POST /system/schedule` to ensure constraint compliance.
 
 ## 4. Frontend Testing
 
