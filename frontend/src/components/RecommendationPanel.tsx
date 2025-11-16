@@ -6,6 +6,7 @@ type Schedule = {
     end_time: string;
   }[];
   justification?: string;
+  strategy?: string;
 };
 
 interface Props {
@@ -48,10 +49,22 @@ const RecommendationPanel = ({ schedule, loading }: Props) => (
         No schedule yet. Waiting for latest telemetry.
       </div>
     )}
-    {schedule?.justification && !loading && (
-      <p className="mt-4 rounded-2xl border border-brand-accent/20 bg-brand-accent/5 px-4 py-3 text-sm text-slate-200">
-        {schedule.justification}
-      </p>
+    {/* Always display explanation and strategy when available, even if no schedule entries */}
+    {((schedule?.justification && schedule.justification !== "Optimized pump schedule based on current conditions.") || schedule?.strategy) && !loading && (
+      <div className="mt-6 space-y-3">
+        {schedule.justification && schedule.justification !== "Optimized pump schedule based on current conditions." && (
+          <div className="rounded-2xl border border-brand-accent/20 bg-brand-accent/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-brand-accent mb-2">Explanation</p>
+            <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">{schedule.justification}</p>
+          </div>
+        )}
+        {schedule.strategy && (
+          <div className="rounded-2xl border border-blue-400/20 bg-blue-400/5 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-400 mb-2">Strategy</p>
+            <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">{schedule.strategy}</p>
+          </div>
+        )}
+      </div>
     )}
   </div>
 );

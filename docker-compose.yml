@@ -16,7 +16,12 @@ services:
       STATUS_AGENT_URL: ${STATUS_AGENT_URL:-http://host.docker.internal:8103}
       INFLOW_AGENT_URL: ${INFLOW_AGENT_URL:-http://host.docker.internal:8104}
       OPTIMIZER_AGENT_URL: ${OPTIMIZER_AGENT_URL:-http://host.docker.internal:8105}
-      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
+      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua.flowoptimization.app:4840/wastewater/}
+      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-https://mcp.flowoptimization.app/sse}
+      # LLM/Featherless API for explanations
+      FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
+      FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instruct}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:

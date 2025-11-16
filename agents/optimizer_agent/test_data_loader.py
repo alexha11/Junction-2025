@@ -189,10 +189,39 @@ class HSYDataLoader:
         
         if method == 'perfect':
             # Use historical future data as "perfect forecast"
-            forecast_df = self.df.iloc[start_idx:end_idx]
+            # Start from start_idx+1 to get the NEXT step (future forecast)
+            # For horizon_steps=1, we want the price at start_idx+1, not start_idx
+            forecast_start_idx = start_idx + 1
+            forecast_end_idx = min(forecast_start_idx + horizon_steps, len(self.df))
+            
+            if forecast_start_idx >= len(self.df):
+                # Can't forecast beyond available data, use last known value
+                forecast_start_idx = len(self.df) - 1
+                forecast_end_idx = len(self.df)
+            
+            forecast_df = self.df.iloc[forecast_start_idx:forecast_end_idx]
             timestamps = forecast_df.index.to_list()
             inflows = forecast_df['F1_m3_s'].fillna(0.0).tolist()
             prices = forecast_df['Price_c_per_kWh'].fillna(0.0).tolist()
+            
+            # Add realistic noise to forecasts (to simulate forecast uncertainty)
+            # Price noise: ±5-10% (realistic for electricity price forecasts)
+            # Inflow noise: ±10-15% (more uncertainty for weather-dependent inflow)
+            # Use deterministic seed based on timestamp for reproducibility
+            seed = int(timestamp.timestamp()) % 1000000
+            np.random.seed(seed)
+            
+            # Add noise to prices (±5-10% normally distributed)
+            prices = [
+                max(0.1, p * (1.0 + np.random.normal(0.0, 0.06)))  # 6% std dev = ~10% max error
+                for p in prices
+            ]
+            
+            # Add noise to inflows (±10-15% normally distributed)
+            inflows = [
+                max(0.0, inf * (1.0 + np.random.normal(0.0, 0.10)))  # 10% std dev = ~15% max error
+                for inf in inflows
+            ]
             
         elif method == 'persistence':
             # Use last known value

@@ -12,10 +12,10 @@ from app.services.digital_twin_adapter import DigitalTwinAdapter
 
 logger = logging.getLogger(__name__)
 
-# Default OPC UA server URL (use localhost for local development, or set via environment variable)
-DEFAULT_OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", "opc.tcp://localhost:4840/wastewater/")
+# Default OPC UA server URL (production deployment, can be overridden via environment variable)
+DEFAULT_OPCUA_SERVER_URL = os.getenv("OPCUA_SERVER_URL", "opc.tcp://opcua.flowoptimization.app:4840/wastewater/")
 OPCUA_SERVER_URL = DEFAULT_OPCUA_SERVER_URL
-DEFAULT_MCP_SERVER_URL = "http://localhost:8080"
+DEFAULT_MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "https://mcp.flowoptimization.app/sse")
 
 
 async def get_digital_twin_current_state(

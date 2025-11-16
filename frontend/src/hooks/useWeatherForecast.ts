@@ -9,6 +9,7 @@ export type WeatherPoint = {
 interface Params {
   hours: number;
   location: string;
+  enabled?: boolean;
 }
 
 const FALLBACK_LOCATION = "Helsinki";
@@ -110,4 +111,5 @@ export const useWeatherForecast = (params: Params) =>
     queryKey: ["weather-forecast", params.location, params.hours],
     queryFn: () => requestWeatherForecast(params),
     staleTime: 1000 * 60 * 5,
+    enabled: params.enabled !== false,
   });

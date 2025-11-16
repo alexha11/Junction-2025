@@ -18,10 +18,12 @@ services:
       WEATHER_AGENT_URL: ${WEATHER_AGENT_URL:-http://weather-agent:8101}
       PRICE_AGENT_URL: ${PRICE_AGENT_URL:-http://price-agent:8102}
       OPTIMIZER_AGENT_URL: ${OPTIMIZER_AGENT_URL:-http://optimizer-agent:8105}
-      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
+      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua.flowoptimization.app:4840/wastewater/}
+      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-https://mcp.flowoptimization.app/sse}
       # Optional: LLM/Featherless API for explanations
       FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
       FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instruct}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -129,7 +131,7 @@ services:
       BACKEND_URL: ${OPTIMIZER_BACKEND_URL:-http://backend:8000}
       WEATHER_AGENT_URL: ${OPTIMIZER_WEATHER_AGENT_URL:-http://weather-agent:8101}
       PRICE_AGENT_URL: ${OPTIMIZER_PRICE_AGENT_URL:-http://price-agent:8102}
-      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-http://mcp-server:8080}
+      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-https://mcp.flowoptimization.app/sse}
       FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
       FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instruct}
@@ -180,7 +182,7 @@ services:
     container_name: hsy-mcp-server
     environment:
       MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8080}
-      OPCUA_SERVER_URL: ${MCP_OPCUA_SERVER_URL:-opc.tcp://opcua-server:4840/wastewater/}
+      OPCUA_SERVER_URL: ${MCP_OPCUA_SERVER_URL:-opc.tcp://opcua.flowoptimization.app:4840/wastewater/}
     ports:
       - "${MCP_PORT:-8080}:8080"
     depends_on:

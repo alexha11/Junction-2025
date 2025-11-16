@@ -2,7 +2,6 @@ import type { FC } from "react";
 import { SystemState } from "../hooks/system";
 import useAnimatedNumber from "../hooks/useAnimatedNumber";
 import System3DScene from "./System3DScene";
-import { isBoosterPump } from "../constants/pumps";
 
 interface Props {
   state?: SystemState;
@@ -21,7 +20,6 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
 const TUNNEL_CAPACITY_M3 = 19950;
 
 const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
-  const animatedTunnelLevel = useAnimatedNumber(state?.tunnel_level_l2_m);
   const animatedTunnelVolume = useAnimatedNumber(
     state?.tunnel_water_volume_l1_m3
   );
@@ -79,10 +77,6 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
       ) : (
         <div className="mt-6 grid w-full gap-4 md:grid-cols-2">
           <Stat
-            label="Tunnel level L2 (m)"
-            value={formatMeters(animatedTunnelLevel)}
-          />
-          <Stat
             label="Water volume in tunnel L1 (m³)"
             value={formatVolume(animatedTunnelVolume)}
           />
@@ -95,6 +89,46 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
             label="Price (cents (€)/kWh)"
             value={formatMeters(animatedPrice)}
           />
+          {state?.total_run_hours !== undefined && (
+            <Stat
+              label="Total run hours"
+              value={`${state.total_run_hours.toFixed(2)} h`}
+            />
+          )}
+          {state?.violation_count !== undefined && (
+            <Stat
+              label="Constraint violations"
+              value={state.violation_count === 0 ? "0 ✅" : `${state.violation_count} ⚠️`}
+            />
+          )}
+          {state?.energy_kwh !== undefined && (
+            <Stat
+              label="Energy consumption"
+              value={`${state.energy_kwh.toFixed(2)} kWh`}
+            />
+          )}
+          {state?.cost_eur !== undefined && (
+            <Stat
+              label="Cost"
+              value={`€${state.cost_eur.toFixed(2)}`}
+            />
+          )}
+          {state?.savings && (state.savings.cost_eur !== undefined || state.savings.energy_kwh !== undefined) && (
+            <Stat
+              label="Savings vs baseline"
+              value={
+                state.savings.cost_percent !== undefined
+                  ? `€${state.savings.cost_eur?.toFixed(2) || 0} (${state.savings.cost_percent.toFixed(1)}%)`
+                  : `${state.savings.energy_kwh?.toFixed(2) || 0} kWh (${state.savings.energy_percent?.toFixed(1) || 0}%)`
+              }
+            />
+          )}
+          {state?.specific_energy_kwh_m3 !== undefined && (
+            <Stat
+              label="Specific energy"
+              value={`${state.specific_energy_kwh_m3.toFixed(2)} kWh/m³`}
+            />
+          )}
         </div>
       )}
       <div className="mt-6 max-h-64 overflow-auto rounded-2xl border border-white/5 scroll-glow">
@@ -104,7 +138,7 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
               <th className="px-4 py-3 text-left">Pump</th>
               <th className="px-4 py-3 text-left">State</th>
               <th className="px-4 py-3 text-right">Hz</th>
-              <th className="px-4 py-3 text-right">kW</th>
+              <th className="px-4 py-3 text-right">Run Hours</th>
             </tr>
           </thead>
           <tbody>
@@ -120,9 +154,14 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
                     )}`}
                   />
                   <span className="align-middle">{pump.pump_id}</span>
-                  {isBoosterPump(pump.pump_id) && (
-                    <span className="ml-2 inline-flex items-center rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-                      Booster
+                  {/* Show pump type (big/small) from simulation data */}
+                  {(pump as any).type && (
+                    <span className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      (pump as any).type === "big" 
+                        ? "bg-blue-400/15 text-blue-200" 
+                        : "bg-green-400/15 text-green-200"
+                    }`}>
+                      {(pump as any).type === "big" ? "Big" : "Small"}
                     </span>
                   )}
                 </td>
@@ -132,8 +171,8 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
                 <td className="px-4 py-2 text-right">
                   {pump.frequency_hz.toFixed(2)}
                 </td>
-                <td className="px-4 py-2 text-right">
-                  {pump.power_kw.toFixed(2)}
+                <td className="px-4 py-2 text-right text-slate-400">
+                  {pump.running_hours !== undefined ? pump.running_hours.toFixed(2) : "--"}
                 </td>
               </tr>
             ))}
@@ -146,6 +185,8 @@ const SystemOverviewCard: FC<Props> = ({ state, loading }) => {
           inflow={state?.inflow_m3_s}
           outflow={state?.outflow_m3_s}
           tunnelFillRatio={tunnelFillRatio}
+          tunnelLevelL1={state?.tunnel_level_l1_m ?? (state?.tunnel_water_volume_l1_m3 ? state.tunnel_water_volume_l1_m3 / 6250 : 0)} // Use L1 level directly, or calculate from volume
+          tunnelLevelL2={state?.tunnel_level_l2_m ?? 0}
           loading={loading || !state}
         />
       </div>

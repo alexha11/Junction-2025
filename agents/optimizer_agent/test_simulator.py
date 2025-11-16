@@ -16,6 +16,47 @@ from .optimizer import MPCOptimizer, OptimizationResult, CurrentState, ForecastD
 from .test_data_loader import HSYDataLoader
 from .explainability import LLMExplainer, ScheduleMetrics, StrategicPlan, ForecastQualityTracker
 
+def run_async_in_sync(coro, timeout: float = 15.0):
+    """Run an async coroutine from a sync context, handling running event loops.
+    
+    Args:
+        coro: Coroutine to run
+        timeout: Timeout in seconds (default: 15.0)
+    
+    Returns:
+        Result of the coroutine
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        # Check if loop is already running (e.g., in WebSocket/async context)
+        if loop.is_running():
+            # If loop is running, create a new event loop in a separate thread
+            import concurrent.futures
+            import threading
+            
+            def run_in_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(coro)
+                finally:
+                    new_loop.close()
+            
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                return future.result(timeout=timeout)
+        else:
+            # Loop exists but not running - safe to use run_until_complete
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        # No event loop exists - create new one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
 logger = logging.getLogger(__name__)
 
 
@@ -545,13 +586,7 @@ class RollingMPCSimulator:
                     # Generate emergency response if divergence detected and LLM available
                     if divergence and self.llm_explainer:
                         try:
-                            try:
-                                loop = asyncio.get_event_loop()
-                            except RuntimeError:
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                            
-                            emergency_response = loop.run_until_complete(
+                            emergency_response = run_async_in_sync(
                                 self.llm_explainer.generate_emergency_response(
                                     error_type=divergence['error_type'],
                                     error_magnitude=divergence['error_magnitude'],
@@ -578,7 +613,7 @@ class RollingMPCSimulator:
                                 ]
                                 log_boxed(logger, "EMERGENCY RESPONSE", emergency_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                         except Exception as e:
-                            logger.warning(f"Failed to generate emergency response: {e}")
+                            logger.warning(f"  Failed to generate emergency response: {e}")
             
             # Get 24h forecast for strategic planning (if LLM available and enabled)
             strategic_plan = None
@@ -591,22 +626,22 @@ class RollingMPCSimulator:
                     )
                     if forecast_24h:
                         try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                        
-                        strategic_plan = loop.run_until_complete(
-                            self.llm_explainer.generate_strategic_plan(
-                                forecast_24h_timestamps=forecast_24h.timestamps,
-                                forecast_24h_inflow=forecast_24h.inflow_m3_s,
-                                forecast_24h_price=forecast_24h.price_c_per_kwh,
-                                current_l1_m=current_state.l1_m,
-                                l1_min_m=self.optimizer.constraints.l1_min_m,
-                                l1_max_m=self.optimizer.constraints.l1_max_m,
-                                forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
+                            strategic_plan = run_async_in_sync(
+                                self.llm_explainer.generate_strategic_plan(
+                                    forecast_24h_timestamps=forecast_24h.timestamps,
+                                    forecast_24h_inflow=forecast_24h.inflow_m3_s,
+                                    forecast_24h_price=forecast_24h.price_c_per_kwh,
+                                    current_l1_m=current_state.l1_m,
+                                    l1_min_m=self.optimizer.constraints.l1_min_m,
+                                    l1_max_m=self.optimizer.constraints.l1_max_m,
+                                    forecast_quality_tracker=self.forecast_quality_tracker,  # Feed learnings back
+                                ),
+                                timeout=30.0  # Strategic plan can take longer
                             )
-                        )
+                        except Exception as e:
+                            logger.warning(f"  Failed to generate strategic plan: {e}")
+                            strategic_plan = None
+                        
                         if strategic_plan:
                             # Blank line before plan table
                             if self.suppress_prefix:
@@ -969,50 +1004,45 @@ class RollingMPCSimulator:
             explanation = None
             strategy = None
             if self.generate_explanations and self.llm_explainer:
+                # Get strategic guidance
+                strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
+                strategy = ", ".join(set(strategic_guidance[:4]))
+                
+                # Blank line before strategy guidance box
+                if self.suppress_prefix:
+                    print()
+                else:
+                    logger.info("")
+                log_boxed(logger, "STRATEGY GUIDANCE", [strategy], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
+                
+                # Compute metrics for this step
+                metrics = self._compute_step_metrics(opt_result, forecast, current_state)
+                
+                # Build comprehensive state description for LLM
+                pump_state_desc = "; ".join([
+                    f"{pid}: {'ON' if on else 'OFF'}" + (f" @ {freq:.1f}Hz" if on else "")
+                    for pid, on, freq in current_state.pump_states
+                ])
+                
+                current_state_desc = (
+                    f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
+                    f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
+                    f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
+                    f"Electricity price={current_state.price_c_per_kwh:.1f} c/kWh. "
+                    f"Pump states: {pump_state_desc}"
+                )
+                
+                # Generate LLM explanation asynchronously
+                logger.debug("GENERATING LLM EXPLANATION...")
                 try:
-                    # Get strategic guidance
-                    strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
-                    strategy = ", ".join(set(strategic_guidance[:4]))
-                    
-                    # Blank line before strategy guidance box
-                    if self.suppress_prefix:
-                        print()
-                    else:
-                        logger.info("")
-                    log_boxed(logger, "STRATEGY GUIDANCE", [strategy], width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
-                    
-                    # Compute metrics for this step
-                    metrics = self._compute_step_metrics(opt_result, forecast, current_state)
-                    
-                    # Build comprehensive state description for LLM
-                    pump_state_desc = "; ".join([
-                        f"{pid}: {'ON' if on else 'OFF'}" + (f" @ {freq:.1f}Hz" if on else "")
-                        for pid, on, freq in current_state.pump_states
-                    ])
-                    
-                    current_state_desc = (
-                        f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
-                        f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
-                        f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
-                        f"Electricity price={current_state.price_c_per_kwh:.1f} c/kWh. "
-                        f"Pump states: {pump_state_desc}"
-                    )
-                    
-                    # Generate LLM explanation asynchronously
-                    logger.debug("GENERATING LLM EXPLANATION...")
-                    try:
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    explanation = loop.run_until_complete(
+                    explanation = run_async_in_sync(
                         self.llm_explainer.generate_explanation(
                             metrics=metrics,
                             strategic_guidance=strategic_guidance,
                             current_state_description=current_state_desc,
                             strategic_plan=strategic_plan,
-                        )
+                        ),
+                        timeout=15.0
                     )
                     # Blank line before LLM explanation box
                     if self.suppress_prefix:
@@ -1052,12 +1082,13 @@ class RollingMPCSimulator:
                                 else:
                                     explanation_lines.append(line)
                         if not explanation_lines:
-                            explanation_lines = ["No explanation available"]
+                            explanation_lines = ["❌ No LLM explanation available (no fallback)"]
                     else:
-                        explanation_lines = ["No explanation available"]
+                        explanation_lines = ["❌ No LLM explanation available (no fallback)"]
                     log_boxed(logger, "LLM EXPLANATION", explanation_lines, width=80, include_timestamp=False, suppress_prefix=self.suppress_prefix)
                 except Exception as e:
-                    logger.warning(f"  Failed to generate explanation: {e}")
+                    logger.error(f"  ❌ Failed to generate LLM explanation: {e} - returning None (no fallback)")
+                    explanation = None  # No fallback - return None on error
             
             # Update currently running pumps (for reference only)
             if opt_result.success and opt_result.schedules:

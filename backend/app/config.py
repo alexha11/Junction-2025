@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,8 +21,8 @@ class Settings(BaseSettings):
     optimizer_agent_url: str = "http://localhost:8105"
     
     # Digital Twin configuration
-    digital_twin_opcua_url: str = "opc.tcp://localhost:4840/wastewater/"
-    digital_twin_mcp_url: str = "http://localhost:8080"
+    digital_twin_opcua_url: str = "opc.tcp://opcua.flowoptimization.app:4840/wastewater/"
+    digital_twin_mcp_url: str = "https://mcp.flowoptimization.app/sse"
     use_digital_twin: bool = True
     
     # Weather agent configuration
@@ -32,10 +33,15 @@ class Settings(BaseSettings):
     weather_agent_location: str = "Helsinki"  # Default location for weather forecasts
     openweather_api_key: str = ""  # Optional - required for live weather data
     
+    # LLM/Featherless API configuration (optional)
+    featherless_api_base: Optional[str] = None
+    featherless_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
+    
     # Future agent URLs (placeholders)
     electricity_agent_url: str = "http://localhost:8106"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 @lru_cache

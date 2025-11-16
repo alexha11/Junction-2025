@@ -44,6 +44,7 @@ class DemoSimulator:
         self.optimizer = optimizer
         self.reoptimize_interval_minutes = reoptimize_interval_minutes
         self.update_callback = update_callback
+        self.llm_explainer = llm_explainer
         
         # Create underlying simulator with LLM support
         self.simulator = RollingMPCSimulator(
@@ -55,6 +56,12 @@ class DemoSimulator:
             generate_strategic_plan=generate_strategic_plan and (llm_explainer is not None),
             suppress_prefix=True,
         )
+        
+        # Log LLM initialization status
+        if llm_explainer:
+            logger.info(f"✅ DemoSimulator: LLM explainer initialized (generate_explanations={self.simulator.generate_explanations}, generate_strategic_plan={self.simulator.generate_strategic_plan})")
+        else:
+            logger.warning("❌ DemoSimulator: No LLM explainer provided - explanations/strategy will be None")
     
     def _format_result_as_json(self, result: SimulationResult, step_index: int, total_steps: int, forecast: Optional[ForecastData] = None, start_time: Optional[datetime] = None) -> Dict[str, Any]:
         """Format a simulation result as JSON for frontend."""
@@ -111,20 +118,28 @@ class DemoSimulator:
         cross_section_area_m2 = TUNNEL_VOLUME_M3 / MAX_LEVEL_M
         l1_volume_m3 = result.current_state.l1_m * cross_section_area_m2
         
-        # Try to get L2 from digital twin or data (may not be available)
-        # For now, we'll use None if not available, or try to get from baseline state
-        l2_m = None
-        if hasattr(result, 'baseline_state') and result.baseline_state:
-            # If we have baseline state, check for L2
-            if hasattr(result.baseline_state, 'l2_m'):
-                l2_m = result.baseline_state.l2_m
+        # L2 removed - not available in simulation data
+        
+        # Get pump power from optimization schedules (time_step 0 = current step)
+        pump_power_map: Dict[str, float] = {}
+        if opt_result.schedules:
+            for schedule in opt_result.schedules:
+                if schedule.time_step == 0 and schedule.is_on:
+                    pump_power_map[schedule.pump_id] = schedule.power_kw
+        
+        # Determine pump type (big vs small)
+        # Small pumps: 1.1, 2.1 (200 kW max)
+        # Big pumps: 1.2, 1.3, 1.4, 2.2, 2.3, 2.4 (400 kW max)
+        def get_pump_type(pump_id: str) -> str:
+            if pump_id.endswith(".1"):
+                return "small"
+            return "big"
         
         # Format current state
         state = {
             "timestamp": result.current_state.timestamp.isoformat(),
             "l1_m": result.current_state.l1_m,  # L1 level in meters
             "l1_volume_m3": l1_volume_m3,  # L1 volume in m³ (calculated)
-            "l2_m": l2_m,  # L2 level in meters (if available)
             "inflow_m3_s": result.current_state.inflow_m3_s,
             "outflow_m3_s": result.current_state.outflow_m3_s,
             "price_c_per_kwh": result.current_state.price_c_per_kwh,
@@ -133,6 +148,8 @@ class DemoSimulator:
                     "pump_id": pump_id,
                     "state": "on" if is_on else "off",
                     "frequency_hz": freq,
+                    "power_kw": pump_power_map.get(pump_id, 0.0),
+                    "type": get_pump_type(pump_id),  # "big" or "small"
                 }
                 for pump_id, is_on, freq in result.current_state.pump_states
             ],
@@ -160,7 +177,7 @@ class DemoSimulator:
                 "price_c_per_kwh": [],
             }
         
-        # Calculate baseline cost and energy for this step
+        # Calculate baseline cost and energy for CURRENT STEP ONLY (15 minutes)
         baseline_cost_eur = 0.0
         baseline_energy_kwh = 0.0
         baseline_outflow_m3_s = 0.0  # Total outflow (sum of all pumps)
@@ -173,6 +190,23 @@ class DemoSimulator:
                     baseline_energy_kwh += power_kw * dt_hours
                     baseline_cost_eur += power_kw * dt_hours * (result.current_state.price_c_per_kwh / 100.0)
                     baseline_outflow_m3_s += flow_m3_s  # Sum all pump flows
+        
+        # Calculate optimized cost and energy for CURRENT STEP ONLY (time_step 0)
+        # This matches baseline which is for 1 step
+        optimized_cost_eur_current_step = 0.0
+        optimized_energy_kwh_current_step = 0.0
+        dt_hours = self.reoptimize_interval_minutes / 60.0
+        if opt_result.schedules and forecast:
+            # Get price for current step (time_step 0)
+            price_c_per_kwh_current = result.current_state.price_c_per_kwh
+            if len(forecast.price_c_per_kwh) > 0:
+                price_c_per_kwh_current = forecast.price_c_per_kwh[0]
+            
+            # Sum cost/energy for all pumps at time_step 0
+            for schedule in opt_result.schedules:
+                if schedule.time_step == 0 and schedule.is_on:
+                    optimized_energy_kwh_current_step += schedule.power_kw * dt_hours
+                    optimized_cost_eur_current_step += schedule.power_kw * dt_hours * (price_c_per_kwh_current / 100.0)
         
         # Calculate optimized outflow for smoothness (time series across horizon)
         optimized_outflow_m3_s = []
@@ -197,31 +231,42 @@ class DemoSimulator:
                 mean_opt = sum(optimized_outflow_m3_s) / len(optimized_outflow_m3_s) if optimized_outflow_m3_s else 0.0
                 optimized_smoothness = sum((x - mean_opt) ** 2 for x in optimized_outflow_m3_s) / len(optimized_outflow_m3_s) if optimized_outflow_m3_s else 0.0
         
-        # Calculate savings compared to baseline
-        savings_cost_eur = baseline_cost_eur - opt_result.total_cost_eur
+        # Calculate savings compared to baseline (comparing current step only)
+        savings_cost_eur = baseline_cost_eur - optimized_cost_eur_current_step
         savings_cost_percent = (savings_cost_eur / baseline_cost_eur * 100.0) if baseline_cost_eur > 0 else 0.0
-        savings_energy_kwh = baseline_energy_kwh - opt_result.total_energy_kwh
+        savings_energy_kwh = baseline_energy_kwh - optimized_energy_kwh_current_step
         savings_energy_percent = (savings_energy_kwh / baseline_energy_kwh * 100.0) if baseline_energy_kwh > 0 else 0.0
         
         # Format optimization result - include all available information
         optimization = {
             "success": opt_result.success,
             "mode": opt_result.mode.value if opt_result.mode else None,
+            # Full horizon totals (for reference)
             "total_energy_kwh": opt_result.total_energy_kwh,
             "total_cost_eur": opt_result.total_cost_eur,
+            # Current step only (for comparison with baseline)
+            "current_step_energy_kwh": optimized_energy_kwh_current_step,
+            "current_step_cost_eur": optimized_cost_eur_current_step,
+            # Solver metrics
             "solve_time_seconds": opt_result.solve_time_seconds,
             "l1_violations": getattr(opt_result, 'l1_violations', 0),
             "max_violation_m": getattr(opt_result, 'max_violation_m', 0.0),
             "l1_trajectory": opt_result.l1_trajectory if opt_result.l1_trajectory else [],
             "explanation": opt_result.explanation if opt_result.explanation else None,
             "schedules": schedules,
-            # Baseline comparison
+            # Baseline comparison (current step only)
             "baseline": {
                 "cost_eur": baseline_cost_eur,
                 "energy_kwh": baseline_energy_kwh,
                 "outflow_variance": baseline_smoothness,
             },
-            # Savings compared to baseline
+            # Optimized (current step only) - for direct comparison
+            "optimized": {
+                "cost_eur": optimized_cost_eur_current_step,
+                "energy_kwh": optimized_energy_kwh_current_step,
+                "outflow_variance": optimized_smoothness,
+            },
+            # Savings compared to baseline (current step)
             "savings": {
                 "cost_eur": savings_cost_eur,
                 "cost_percent": savings_cost_percent,
@@ -247,13 +292,15 @@ class DemoSimulator:
                 "mode": opt_result.mode.value if opt_result.mode else None,
             }
         
-        # Include LLM-generated content if available
+        # Include explanations and strategy (LLM only - no fallback)
         explanation_data = None
         if result.explanation:
+            # Use LLM-generated explanation only
             explanation_data = result.explanation
         
         strategy_data = None
         if result.strategy:
+            # Use LLM-generated strategy only
             strategy_data = result.strategy
         
         strategic_plan_data = None
@@ -294,7 +341,6 @@ class DemoSimulator:
                 "pumps_off": sum(1 for p in state["pumps"] if p["state"] == "off"),
                 "l1_m": state["l1_m"],  # Current L1 level
                 "l1_volume_m3": state["l1_volume_m3"],  # Current L1 volume
-                "l2_m": state.get("l2_m"),  # Current L2 level (if available)
                 "inflow_m3_s": state["inflow_m3_s"],
                 "outflow_m3_s": state["outflow_m3_s"],
                 "net_flow_m3_s": state["inflow_m3_s"] - state["outflow_m3_s"],
@@ -352,47 +398,271 @@ class DemoSimulator:
                 "total_steps": total_steps,
                 "reoptimize_interval_minutes": self.reoptimize_interval_minutes,
             }
-            if asyncio.iscoroutinefunction(self.update_callback):
-                await self.update_callback(initial_msg)
-            else:
-                self.update_callback(initial_msg)
-        
-        # Use the simulator's simulate method which includes LLM support
-        # We'll intercept results and send updates via callback
-        simulation = self.simulator.simulate(
-            start_time=start_time,
-            end_time=end_time,
-            horizon_minutes=120,  # 2-hour horizon
-        )
-        
-        # Send updates for each result
-        for step_index, result in enumerate(simulation.results):
-            # Get forecast for this step
-            forecast = self.data_loader.get_forecast_from_time(result.timestamp, 8)
-            
-            # Log explanation status for debugging
-            if result.explanation:
-                logger.info(f"Step {step_index}: Explanation available ({len(result.explanation)} chars)")
-            else:
-                logger.debug(f"Step {step_index}: No explanation (explanation={result.explanation}, strategy={result.strategy})")
-            
-            # Send update via callback
-            if self.update_callback:
-                update_data = self._format_result_as_json(result, step_index, len(simulation.results), forecast=forecast, start_time=start_time)
+            logger.info(f"📤 Sending simulation_start message (total_steps={total_steps})...")
+            try:
                 if asyncio.iscoroutinefunction(self.update_callback):
-                    await self.update_callback(update_data)
+                    sent = await self.update_callback(initial_msg)
                 else:
-                    self.update_callback(update_data)
-            
-            # Wait before next step (adjusted by speed multiplier)
-            if step_index < len(simulation.results) - 1:  # Don't wait after last step
-                wait_seconds = (self.reoptimize_interval_minutes * 60) / speed_multiplier
-                await asyncio.sleep(wait_seconds)
+                    sent = self.update_callback(initial_msg)
+                if sent is False:
+                    logger.warning("⚠️ Connection closed before simulation started")
+                    raise ConnectionError("Connection closed before simulation started")
+                logger.info("✅ simulation_start message sent successfully")
+            except ConnectionError:
+                raise
+            except Exception as e:
+                logger.error(f"❌ Failed to send simulation_start: {e}", exc_info=True)
+                raise
+        
+        logger.info(f"🚀 Running simulation from {start_time} to {end_time} ({total_steps} steps)...")
+        
+        # Create a RollingSimulation to collect results
+        simulation = RollingSimulation(start_time=start_time, end_time=end_time)
+        
+        # Run simulation incrementally, sending messages after each step
+        # This allows real-time streaming instead of waiting for entire simulation to complete
+        current_time = start_time
+        step_index = 0
+        
+        # Initialize state from simulator
+        initial_state = self.data_loader.get_state_at_time(start_time, include_pump_states=False)
+        if initial_state is None:
+            error_msg = {
+                "type": "error",
+                "message": f"No data available at {start_time}",
+                "error_type": "ValueError",
+            }
+            if self.update_callback:
+                if asyncio.iscoroutinefunction(self.update_callback):
+                    await self.update_callback(error_msg)
+                else:
+                    self.update_callback(error_msg)
+            raise ValueError(f"No data available at {start_time}")
+        
+        # Use simulator's internal state
+        simulated_l1 = initial_state.l1_m
+        
+        try:
+            while current_time <= end_time:
+                logger.info(f"🔄 Processing step {step_index + 1}/{total_steps} at {current_time.isoformat()}")
+                
+                # Get current state
+                current_state = self.data_loader.get_state_at_time(current_time, include_pump_states=False)
+                if current_state is None:
+                    logger.warning(f"⚠️ No data available at {current_time}, skipping...")
+                    current_time += timedelta(minutes=self.reoptimize_interval_minutes)
+                    step_index += 1
+                    continue
+                
+                current_state.l1_m = simulated_l1
+                
+                # Try to get L2 from data loader if available (check if data has L2 column)
+                # For now, L2 is not in the data, so we'll set it to None and let the formatter handle it
+                # If L2 data becomes available, we can add it here
+                
+                # Update pump states from previous optimization if available
+                # Only use time_step=0 (current step) from previous optimization
+                if len(simulation.results) > 0:
+                    prev_result = simulation.results[-1]
+                    if prev_result.optimization_result.success and prev_result.optimization_result.schedules:
+                        prev_pump_states = {}
+                        # Only use schedules from time_step=0 (current step) of previous optimization
+                        for schedule in prev_result.optimization_result.schedules:
+                            if schedule.time_step == 0:  # Only current step from previous optimization
+                                prev_pump_states[schedule.pump_id] = (schedule.pump_id, schedule.is_on, schedule.frequency_hz)
+                        
+                        updated_pump_states = []
+                        for pump_id, _, _ in current_state.pump_states:
+                            if pump_id in prev_pump_states:
+                                updated_pump_states.append(prev_pump_states[pump_id])
+                            else:
+                                updated_pump_states.append((pump_id, False, 0.0))
+                        current_state.pump_states = updated_pump_states
+                # At step 0, pumps should start OFF (already set by get_state_at_time with include_pump_states=False)
+                
+                # Get forecast for optimization (2-hour tactical horizon)
+                horizon_steps = 120 // self.optimizer.time_step_minutes  # 2-hour horizon
+                forecast = self.data_loader.get_forecast_from_time(current_time, horizon_steps, method='perfect')
+                if forecast is None:
+                    logger.warning(f"⚠️ No forecast available at {current_time}, skipping...")
+                    current_time += timedelta(minutes=self.reoptimize_interval_minutes)
+                    step_index += 1
+                    continue
+                
+                # Generate strategic plan (24h) BEFORE optimization if LLM is enabled
+                strategic_plan = None
+                if self.simulator.generate_strategic_plan and self.simulator.llm_explainer:
+                    try:
+                        logger.info(f"🧠 Generating strategic plan for step {step_index + 1}...")
+                        # Request 24h forecast (96 steps of 15 minutes)
+                        forecast_24h_steps = 24 * 60 // self.optimizer.time_step_minutes  # 96 steps
+                        forecast_24h = self.data_loader.get_forecast_from_time(
+                            current_time, forecast_24h_steps, method='perfect'
+                        )
+                        if forecast_24h:
+                            strategic_plan = await self.simulator.llm_explainer.generate_strategic_plan(
+                                forecast_24h_timestamps=forecast_24h.timestamps,
+                                forecast_24h_inflow=forecast_24h.inflow_m3_s,
+                                forecast_24h_price=forecast_24h.price_c_per_kwh,
+                                current_l1_m=current_state.l1_m,
+                                l1_min_m=self.optimizer.constraints.l1_min_m,
+                                l1_max_m=self.optimizer.constraints.l1_max_m,
+                                forecast_quality_tracker=self.simulator.forecast_quality_tracker,
+                            )
+                            if strategic_plan:
+                                logger.info(f"✅ Strategic plan generated: {strategic_plan.plan_type}")
+                            else:
+                                logger.warning(f"⚠️ Strategic plan generation returned None")
+                        else:
+                            logger.warning(f"⚠️ No 24h forecast available for strategic planning")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to generate strategic plan: {e}", exc_info=True)
+                        strategic_plan = None
+                
+                # Run optimization in executor (it's synchronous)
+                logger.info(f"🔧 Running optimization for step {step_index + 1}...")
+                loop = asyncio.get_event_loop()
+                opt_result = await loop.run_in_executor(
+                    None,
+                    lambda: self.optimizer.solve_optimization(
+                        current_state=current_state,
+                        forecast=forecast,
+                        mode=None,  # Will default to OptimizationMode.FULL
+                        timeout_seconds=30,
+                        strategic_plan=strategic_plan,  # Pass strategic plan to influence optimization
+                    )
+                )
+                logger.info(f"✅ Optimization completed for step {step_index + 1} (success={opt_result.success})")
+                
+                # Generate explanation and strategy AFTER optimization if LLM is enabled
+                explanation = None
+                strategy = None
+                if self.simulator.generate_explanations and self.simulator.llm_explainer:
+                    try:
+                        logger.info(f"🧠 Generating explanation for step {step_index + 1}...")
+                        # Get strategic guidance
+                        strategic_guidance = self.optimizer.derive_strategic_guidance(forecast)
+                        strategy = ", ".join(set(strategic_guidance[:4]))
+                        
+                        # Compute metrics for this step
+                        from .test_simulator import ScheduleMetrics
+                        metrics = ScheduleMetrics(
+                            total_energy_kwh=opt_result.total_energy_kwh,
+                            total_cost_eur=opt_result.total_cost_eur,
+                            avg_l1_m=current_state.l1_m,
+                            min_l1_m=opt_result.l1_trajectory[0] if opt_result.l1_trajectory else current_state.l1_m,
+                            max_l1_m=max(opt_result.l1_trajectory) if opt_result.l1_trajectory else current_state.l1_m,
+                            num_pumps_used=len([s for s in opt_result.schedules if s.is_on]) if opt_result.schedules else 0,
+                            avg_outflow_m3_s=sum(s.flow_m3_s for s in opt_result.schedules if s.is_on) / len(opt_result.schedules) if opt_result.schedules else 0.0,
+                            price_range_c_per_kwh=(min(forecast.price_c_per_kwh), max(forecast.price_c_per_kwh)),
+                            risk_level="normal",
+                            optimization_mode=opt_result.mode.value if opt_result.mode else "full",
+                        )
+                        
+                        # Build state description
+                        pump_state_desc = "; ".join([
+                            f"{pid}: {'ON' if on else 'OFF'}" + (f" @ {freq:.1f}Hz" if on else "")
+                            for pid, on, freq in current_state.pump_states
+                        ])
+                        current_state_desc = (
+                            f"System State: Tunnel level L1={current_state.l1_m:.2f}m, "
+                            f"Inflow F1={current_state.inflow_m3_s:.2f} m³/s, "
+                            f"Outflow F2={current_state.outflow_m3_s:.2f} m³/s, "
+                            f"Electricity price={current_state.price_c_per_kwh:.1f} c/kWh. "
+                            f"Pump states: {pump_state_desc}"
+                        )
+                        
+                        # Generate LLM explanation
+                        explanation = await self.simulator.llm_explainer.generate_explanation(
+                            metrics=metrics,
+                            strategic_guidance=strategic_guidance,
+                            current_state_description=current_state_desc,
+                            strategic_plan=strategic_plan,
+                        )
+                        if explanation:
+                            logger.info(f"✅ Explanation generated ({len(explanation)} chars)")
+                        else:
+                            logger.warning(f"⚠️ Explanation generation returned None")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to generate explanation: {e}", exc_info=True)
+                        explanation = None
+                        strategy = None
+                
+                # Get baseline schedule
+                baseline_schedule = self.data_loader.get_baseline_schedule_at_time(current_time)
+                
+                # Create simulation result with LLM-generated content
+                result = SimulationResult(
+                    timestamp=current_time,
+                    current_state=current_state,  # Required field
+                    optimization_result=opt_result,
+                    baseline_schedule=baseline_schedule,
+                    explanation=explanation,  # LLM explanation
+                    strategy=strategy,  # Strategic guidance
+                    strategic_plan=strategic_plan,  # Strategic plan
+                )
+                
+                simulation.results.append(result)
+                
+                # Send update immediately after this step
+                if self.update_callback:
+                    try:
+                        forecast_8 = self.data_loader.get_forecast_from_time(current_time, 8)
+                        update_data = self._format_result_as_json(result, step_index, total_steps, forecast=forecast_8, start_time=start_time)
+                        logger.info(f"📤 Sending step {step_index + 1}/{total_steps} (timestamp: {current_time.isoformat()})...")
+                        if asyncio.iscoroutinefunction(self.update_callback):
+                            sent = await self.update_callback(update_data)
+                        else:
+                            sent = self.update_callback(update_data)
+                        
+                        # Check if message was sent successfully (callback may return False if connection closed)
+                        if sent is False:
+                            logger.warning(f"⚠️ Connection closed, stopping simulation at step {step_index + 1}")
+                            break  # Stop simulation if connection is closed
+                        
+                        logger.info(f"✅ Step {step_index + 1}/{total_steps} sent successfully")
+                    except ConnectionError as conn_err:
+                        logger.warning(f"⚠️ Connection error at step {step_index + 1}: {conn_err}")
+                        break  # Stop simulation on connection error
+                    except Exception as e:
+                        logger.error(f"❌ Failed to send step {step_index + 1}: {e}", exc_info=True)
+                        # Check if it's a connection error - if so, stop simulation
+                        error_str = str(e).lower()
+                        if "close" in error_str or "disconnect" in error_str or "connection" in error_str:
+                            logger.warning(f"⚠️ Connection error detected, stopping simulation at step {step_index + 1}")
+                            break  # Stop simulation on connection error
+                        # For other errors, log but continue (might be transient)
+                        logger.warning(f"⚠️ Non-connection error when sending step {step_index + 1}, continuing...")
+                
+                # Update simulated L1 for next step (simplified - would normally come from plant/simulator)
+                if opt_result.success and opt_result.l1_trajectory and len(opt_result.l1_trajectory) > 0:
+                    simulated_l1 = opt_result.l1_trajectory[0]
+                
+                # Move to next time step
+                step_index += 1
+                current_time += timedelta(minutes=self.reoptimize_interval_minutes)
+                
+                # Process messages sequentially - no wait time, proceed immediately to next step
+                if current_time > end_time:
+                    logger.info(f"✅ Reached end time, simulation complete")
+        
+        except Exception as e:
+            logger.error(f"Simulation failed at step {step_index}: {e}", exc_info=True)
+            if self.update_callback:
+                error_msg = {
+                    "type": "error",
+                    "message": f"Simulation failed at step {step_index + 1}: {str(e)}",
+                    "error_type": type(e).__name__,
+                }
+                if asyncio.iscoroutinefunction(self.update_callback):
+                    await self.update_callback(error_msg)
+                else:
+                    self.update_callback(error_msg)
+            raise
         
         # Send summary
         if self.update_callback:
             summary = self._format_summary_as_json(simulation)
-            # Handle both sync and async callbacks
             if asyncio.iscoroutinefunction(self.update_callback):
                 await self.update_callback(summary)
             else:

@@ -232,13 +232,16 @@ class LLMExplainer:
         strategic_guidance: list[str],
         current_state_description: str = "",
         strategic_plan: Optional[StrategicPlan] = None,
-    ) -> str:
-        """Generate natural language explanation for the schedule."""
+    ) -> Optional[str]:
+        """Generate natural language explanation for the schedule.
         
-        # If no LLM available, return structured explanation
+        NO FALLBACK - Returns None if LLM is unavailable or fails.
+        """
+        
+        # If no LLM available, return None (no fallback)
         if not self.api_base or not self.api_key:
-            logger.debug("LLM not available: missing API credentials")
-            return self._generate_fallback_explanation(metrics, strategic_guidance)
+            logger.error("LLM not available: missing API credentials - returning None (no fallback)")
+            return None
         
         try:
             # Log strategic guidance being sent to LLM (at DEBUG level)
@@ -283,15 +286,14 @@ class LLMExplainer:
                 logger.debug(f"LLM Response: {explanation}")
                 return explanation
         except httpx.TimeoutException as e:
-            logger.error(f"LLM: Request timeout after 10s: {e}")
-            return self._generate_fallback_explanation(metrics, strategic_guidance)
+            logger.error(f"LLM: Request timeout after 10s: {e} - returning None (no fallback)")
+            return None
         except httpx.HTTPStatusError as e:
-            logger.error(f"LLM: HTTP error {e.response.status_code}: {e.response.text}")
-            return self._generate_fallback_explanation(metrics, strategic_guidance)
+            logger.error(f"LLM: HTTP error {e.response.status_code}: {e.response.text} - returning None (no fallback)")
+            return None
         except Exception as e:
-            logger.error(f"LLM: Unexpected error: {e}", exc_info=True)
-            # Fallback to rule-based explanation
-            return self._generate_fallback_explanation(metrics, strategic_guidance)
+            logger.error(f"LLM: Unexpected error: {e} - returning None (no fallback)", exc_info=True)
+            return None
 
     def _build_prompt(
         self,

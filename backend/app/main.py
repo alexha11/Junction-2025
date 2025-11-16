@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import alerts, system
+from app.api.routes import alerts, system, demo
 from app.config import get_settings
 from app.logging_config import configure_logging
 from app.services.agents_client import AgentsCoordinator
@@ -64,6 +64,13 @@ def create_app() -> FastAPI:
     application.include_router(system.router)
     application.include_router(system.weather_router)
     application.include_router(alerts.router)
+    
+    # Include demo simulator REST API routes (if available)
+    try:
+        application.include_router(demo.router)
+        logger.info("Demo simulator REST API endpoints registered at /system/demo/simulate/*")
+    except Exception as e:
+        logger.warning(f"Demo simulator endpoints not available: {e}")
     
     return application
 

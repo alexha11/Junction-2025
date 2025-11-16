@@ -41,9 +41,9 @@ if str(FORECASTER_SRC) not in sys.path:
     sys.path.append(str(FORECASTER_SRC))
 
 # Import optimizer agent (with fallback if not available)
-AGENTS_SRC = REPO_ROOT / "agents"
-if str(AGENTS_SRC) not in sys.path:
-    sys.path.insert(0, str(AGENTS_SRC))
+# Add repo root to sys.path so 'agents' package can be imported
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 try:
     from agents.optimizer_agent.main import OptimizationAgent, OptimizationRequest
@@ -173,14 +173,17 @@ class AgentsCoordinator:
                         for pump_data in state_dict.get("pumps", [])
                     ]
                     
+                    # Convert electricity price from EUR/MWh to EUR cents/kWh for the model
+                    price_eur_mwh = state_dict.get("electricity_price_eur_mwh", 0.0)
+                    price_eur_cents_kwh = price_eur_mwh / 10.0  # EUR/MWh to EUR cents/kWh
+                    
                     return SystemState(
                         timestamp=now,
-                        tunnel_level_m=state_dict.get("tunnel_level_m", 0.0),
                         tunnel_level_l2_m=state_dict.get("tunnel_level_l2_m", 0.0),
                         tunnel_water_volume_l1_m3=state_dict.get("tunnel_water_volume_l1_m3", 0.0),
                         inflow_m3_s=state_dict.get("inflow_m3_s", 0.0),
                         outflow_m3_s=state_dict.get("outflow_m3_s", 0.0),
-                        electricity_price_eur_mwh=state_dict.get("electricity_price_eur_mwh", 0.0),
+                        electricity_price_eur_cents_kwh=price_eur_cents_kwh,
                         pumps=pumps,
                     )
                 else:
@@ -241,9 +244,9 @@ class AgentsCoordinator:
             / 900.0,  # convert to m3/s from m3/15min
             outflow_m3_s=twin_cur_state.get("SumOfPumpedFlowToWwtp.F2.m3h", 7200.0)
             / 3600.0,  # convert to m3/s from m3/h
-            electricity_price_eur_mwh=twin_cur_state.get(
+            electricity_price_eur_cents_kwh=twin_cur_state.get(
                 "ElectricityPrice.2.Normal.ckwh", 6.5
-            ) * 10.0,  # Convert c/kWh to EUR/MWh
+            ),  # Already in c/kWh
             pumps=pumps,
         )
 
@@ -588,21 +591,28 @@ class AgentsCoordinator:
         # 1. GET CURRENT STATE FROM DIGITAL TWIN
         self._logger.info("🔄 Flow simulation: Getting current state from Digital Twin...")
         current_state = await self.get_system_state()
+        # Calculate L1 level from volume (approximate: 50,000 m³ = 8m, so 1m³ ≈ 0.00016m)
+        l1_level_m = current_state.tunnel_water_volume_l1_m3 / 6250.0  # Approximate conversion
+        price_eur_mwh = current_state.electricity_price_eur_cents_kwh * 10.0  # Convert to EUR/MWh
+        
         self._logger.info(
-            f"✅ Digital Twin state: L1={current_state.tunnel_level_m:.3f}m, "
+            f"✅ Digital Twin state: L1={l1_level_m:.3f}m (from {current_state.tunnel_water_volume_l1_m3:.0f} m³), "
+            f"L2={current_state.tunnel_level_l2_m:.3f}m, "
             f"inflow={current_state.inflow_m3_s:.3f} m³/s, "
             f"outflow={current_state.outflow_m3_s:.3f} m³/s, "
-            f"price={current_state.electricity_price_eur_mwh:.2f} EUR/MWh"
+            f"price={price_eur_mwh:.2f} EUR/MWh"
         )
         
         # Initialize flow simulator if not already initialized
         if flow_simulator.get_simulated_l1() is None:
+            # Calculate L1 level from volume (approximate: 50,000 m³ = 8m)
+            l1_level_m = current_state.tunnel_water_volume_l1_m3 / 6250.0
             flow_simulator.initialize(
-                initial_l1_m=current_state.tunnel_level_m,
+                initial_l1_m=l1_level_m,
                 timestamp=current_state.timestamp
             )
             self._logger.info(
-                f"🚀 Flow simulator initialized with L1={current_state.tunnel_level_m:.3f}m from Digital Twin"
+                f"🚀 Flow simulator initialized with L1={l1_level_m:.3f}m from Digital Twin"
             )
         
         # 2. GET OPTIMIZATION (which internally communicates with Weather & Price agents)
@@ -667,12 +677,15 @@ class AgentsCoordinator:
         
         # 4. BROADCAST SIMULATED STATE VIA WEBSOCKET
         #    (includes data from all three agents)
+        price_eur_mwh = current_state.electricity_price_eur_cents_kwh * 10.0  # Convert to EUR/MWh
         await websocket_manager.broadcast_system_state({
             "tunnel_level_m": simulated_l1,  # Simulated using all agents
             "tunnel_level_l2_m": current_state.tunnel_level_l2_m,  # From Digital Twin
+            "tunnel_water_volume_l1_m3": current_state.tunnel_water_volume_l1_m3,  # From Digital Twin
             "inflow_m3_s": current_state.inflow_m3_s,  # From Digital Twin
             "outflow_m3_s": current_state.outflow_m3_s,  # From Digital Twin
-            "electricity_price_eur_mwh": current_state.electricity_price_eur_mwh,  # From Digital Twin
+            "electricity_price_eur_mwh": price_eur_mwh,  # Converted from EUR cents/kWh
+            "electricity_price_eur_cents_kwh": current_state.electricity_price_eur_cents_kwh,  # From Digital Twin
             "pumps": [p.model_dump() for p in current_state.pumps],  # From Digital Twin
             "simulated": True,  # Flag to indicate this is simulated
             "data_sources": {
