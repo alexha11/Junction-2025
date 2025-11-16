@@ -8,6 +8,7 @@ End-to-end platform for optimizing HSY Blominmäki wastewater pumping using mult
   - [📚 Table of Contents](#-table-of-contents)
   - [🚀 Features](#-features)
   - [🛠️ Technology Stack](#%EF%B8%8F-technology-stack)
+  - [🏗️ Architecture Overview](#%EF%B8%8F-architecture-overview)
   - [📦 Installation & Setup](#-installation--setup)
     - [Backend](#backend)
     - [MCP Agents](#mcp-agents)
@@ -41,6 +42,74 @@ End-to-end platform for optimizing HSY Blominmäki wastewater pumping using mult
 - FastAPI, Pydantic, SQLAlchemy, APScheduler, Redis/Postgres clients for orchestration logic.
 - Node.js 20+, Vite, React 18, React Query, Zustand, Tailwind, Recharts for the operator portal.
 - Docker & Docker Compose for consistent multi-service workflows across dev, demo, and production.
+
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart LR
+  subgraph Client["Operator Experience"]
+    FE["React Dashboard\\n(Vite/NGINX, :5173)"]
+  end
+
+  subgraph Backend["FastAPI Backend (:8000)"]
+    API["REST API\\n/system/* & /weather/*"]
+    AC["AgentsCoordinator\\n+ Integrations"]
+    Scheduler["APScheduler Loop\\n(15 min cadence)"]
+    OptimizerSvc["Optimizer Interface\\n(in-process OR HTTP)"]
+  end
+
+  subgraph Agents["MCP + HTTP Agents"]
+    Weather["Weather Agent\\n(:8101)"]
+    Price["Price Agent\\n(:8102)"]
+    Inflow["Inflow Agent"]
+    Status["Status Agent"]
+    OptimizerHTTP["Optimizer Agent\\nHTTP/MCP (:8105)"]
+  end
+
+  subgraph Twin["Digital Twin"]
+    OPCUA["OPC UA Server\\n(:4840)"]
+    MCPBridge["MCP Bridge\\n(:8080)"]
+  end
+
+  subgraph Data["State & Fallbacks"]
+    Postgres[("PostgreSQL\\n(:5432)")]
+    Redis[("Redis\\n(:6379)")]
+    Samples["sample/*.json\\n(weather, price, Valmet)"]
+  end
+
+  FE -->|REST /api/*| API
+  API --> AC
+  Scheduler --> AC
+  AC --> OptimizerSvc
+  OptimizerSvc --> OptimizerHTTP
+  AC --> Weather
+  AC --> Price
+  AC --> Inflow
+  AC --> Status
+  AC -->|OPC UA read/write| OPCUA
+  AC -->|MCP tools| MCPBridge
+  Scheduler -->|writes schedules| OPCUA
+  AC <-->|state, cache| Postgres
+  AC <-->|jobs, cache| Redis
+  AC -->|fallback data| Samples
+  Samples -.provides.-> Weather
+  Samples -.provides.-> Price
+```
+
+- **Frontend** renders telemetry, forecasts, and AI schedules; it proxies `/api/*` calls to the backend and will later subscribe to push updates.
+- **FastAPI backend** hosts public APIs, the `AgentsCoordinator`, and the scheduler loop that fanouts to MCP agents, the optimizer, and the digital twin.
+- **MCP agents** (weather, price, status, inflow, optimizer) can run standalone over HTTP or MCP; the backend can either call them directly or delegate to an HTTP-facing optimizer service.
+- **Digital twin** pairs an OPC UA server (realistic tunnel + pump signals) with an MCP bridge so the backend can both read state and push pump frequencies safely.
+- **Data planes** (Postgres/Redis) are optional but wired into `docker-compose.full.yml` for persistence, caching, and future analytics.
+- **Fallback samples** flow from `sample/*.json` whenever live APIs or MCP bridges are unavailable, keeping recommendations predictable during demos.
+
+Operational highlights:
+
+1. APScheduler fires every 15 minutes, the backend snapshots tunnel state via OPC UA/MCP, grabs forecasts from agents, and invokes the optimizer.
+2. Optimizer responses (schedule + metrics) are stored in memory, written back to the digital twin, and exposed to the dashboard via `/system/*` endpoints.
+3. If an agent or twin is unreachable, the backend falls back to deterministic `sample/` data to keep recommendations flowing, logging the degraded mode for observability.
+
+See `docs/SYSTEM_ARCHITECTURE.md` for deeper diagrams (sequence flows, data models, integration details) that match this summary.
 
 ## ⚡ Quick Start (Full Stack Docker)
 
