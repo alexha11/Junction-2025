@@ -17,12 +17,15 @@ class OptimizationScheduler:
         self._logger = logging.getLogger(self.__class__.__name__)
 
     async def _optimize(self) -> None:
+        """Run optimization and store result for dashboard."""
         recommendation = await self._agents.get_schedule_recommendation()
+        # Result is automatically stored in AgentsCoordinator._latest_optimization_result
         # TODO: persist + broadcast via WebSocket once storage layer exists.
-        self._logger.debug(
-            "New schedule recommendation computed generated_at=%s entries=%s",
+        self._logger.info(
+            "New schedule recommendation computed generated_at=%s entries=%s horizon_minutes=%s",
             recommendation.generated_at.isoformat(),
             len(recommendation.entries),
+            recommendation.horizon_minutes,
         )
 
     def start(self) -> None:

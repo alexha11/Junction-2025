@@ -2,13 +2,13 @@ from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import alerts, system
 from app.config import get_settings
 from app.logging_config import configure_logging
 from app.services.agents_client import AgentsCoordinator
 from app.services.scheduler import OptimizationScheduler
-from fastapi.middleware.cors import CORSMiddleware
 
 _agents = AgentsCoordinator()
 _scheduler: OptimizationScheduler | None = None
@@ -44,17 +44,27 @@ def create_app() -> FastAPI:
         settings.api_version,
     )
     application = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=lifespan)
-
+    
+    # Configure CORS for frontend access
     application.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",  # Vite dev server
+            "http://localhost:3000",  # Alternative frontend port
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+            "*",  # Allow all origins for development (can be restricted in production)
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    # Include API routers
     application.include_router(system.router)
     application.include_router(system.weather_router)
     application.include_router(alerts.router)
+    
     return application
 
 

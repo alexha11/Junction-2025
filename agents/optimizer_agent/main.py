@@ -54,14 +54,21 @@ class OptimizationAgent(BaseMCPAgent):
 
     def __init__(
         self,
-        status_agent_url: Optional[str] = None,
         price_agent_url: Optional[str] = None,
         inflow_agent_url: Optional[str] = None,
+        weather_agent_url: Optional[str] = None,
+        backend_url: Optional[str] = None,
+        digital_twin_mcp_url: Optional[str] = None,
         featherless_api_base: Optional[str] = None,
         featherless_api_key: Optional[str] = None,
     ):
         super().__init__(name="optimization-agent")
-        self.status_agent_url = status_agent_url or os.getenv("STATUS_AGENT_URL", "http://localhost:8103")
+        # Backend URL (primary path - uses digital twin via backend)
+        self.backend_url = backend_url or os.getenv("BACKEND_URL", "http://localhost:8000")
+        # Direct MCP access (optional, for standalone operation)
+        self.digital_twin_mcp_url = digital_twin_mcp_url or os.getenv("DIGITAL_TWIN_MCP_URL")
+        # Agent URLs
+        self.weather_agent_url = weather_agent_url or os.getenv("WEATHER_AGENT_URL", "http://localhost:8101")
         self.price_agent_url = price_agent_url or os.getenv("PRICE_AGENT_URL", "http://localhost:8102")
         self.inflow_agent_url = inflow_agent_url or os.getenv("INFLOW_AGENT_URL", "http://localhost:8104")
         
@@ -275,7 +282,7 @@ class OptimizationAgent(BaseMCPAgent):
                 metrics, strategic_guidance, current_state, strategic_plan
             )
             
-            return OptimizationResponse(
+            response = OptimizationResponse(
                 generated_at=datetime.utcnow(),
                 entries=entries,
                 justification=explanation,
@@ -283,33 +290,59 @@ class OptimizationAgent(BaseMCPAgent):
                 total_energy_kwh=result.total_energy_kwh,
                 optimization_mode=result.mode.value,
             )
+            
+            # Write schedule to digital twin (if enabled)
+            self._write_schedule_to_digital_twin(response)
+            
+            return response
         except Exception as e:
             # Fallback to safe rule-based schedule
             return self._generate_fallback_schedule(request)
 
     def _get_current_state(self) -> CurrentState:
-        """Get current system state from status agent or stub."""
+        """Get current system state from backend (digital twin) or direct MCP or fallback."""
+        # Try backend endpoint first (primary path - uses digital twin)
         try:
-            # Try to call status agent
-            response = httpx.get(f"{self.status_agent_url}/get_current_system_state", timeout=5.0)
+            response = httpx.get(f"{self.backend_url}/system/state", timeout=5.0)
             if response.status_code == 200:
                 data = response.json()
                 pumps = [
                     (p["pump_id"], p.get("state") == "on", p.get("frequency_hz", 0.0))
                     for p in data.get("pumps", [])
                 ]
+                # Convert electricity_price_eur_mwh to price_c_per_kwh
+                price_eur_mwh = data.get("electricity_price_eur_mwh", 72.5)
+                price_c_per_kwh = price_eur_mwh / 10.0  # EUR/MWh to c/kWh
+                
                 return CurrentState(
                     timestamp=datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00")),
                     l1_m=data.get("tunnel_level_m", 3.2),
                     inflow_m3_s=data.get("inflow_m3_s", 2.1),
                     outflow_m3_s=data.get("outflow_m3_s", 2.0),
                     pump_states=pumps,
-                    price_c_per_kwh=data.get("price_c_per_kwh", data.get("price_c_per_kwh", 72.5)),
+                    price_c_per_kwh=price_c_per_kwh,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to get state from backend: {e}")
         
-        # Fallback to stub data (use physical pump IDs 1.1-1.4 and 2.1-2.4)
+        # Try direct MCP access if configured (optional standalone mode)
+        if self.digital_twin_mcp_url:
+            try:
+                # Call MCP server's read_opcua_variable tool for key variables
+                # This is a simplified approach - in production, you'd use the MCP SDK
+                response = httpx.post(
+                    f"{self.digital_twin_mcp_url}/tools/read_opcua_variable",
+                    json={"variable_name": "WaterLevelInTunnel.L2.m"},
+                    timeout=5.0,
+                )
+                if response.status_code == 200:
+                    # If MCP is available, we could read more variables here
+                    # For now, fall through to stub data
+                    logger.debug("MCP server is available but full state reading not yet implemented")
+            except Exception as e:
+                logger.debug(f"Failed to get state from MCP: {e}")
+        
+        # Final fallback to stub data (use physical pump IDs 1.1-1.4 and 2.1-2.4)
         default_pump_ids = ["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3", "2.4"]
         return CurrentState(
             timestamp=datetime.utcnow(),
@@ -322,6 +355,67 @@ class OptimizationAgent(BaseMCPAgent):
             ],
             price_c_per_kwh=72.5,
         )
+    
+    def _write_schedule_to_digital_twin(self, response: OptimizationResponse) -> None:
+        """Write optimization schedule to digital twin via backend or direct MCP."""
+        try:
+            # Convert OptimizationResponse entries to dictionary format for backend API
+            schedule_dict = {
+                "generated_at": response.generated_at.isoformat(),
+                "horizon_minutes": 120,  # Default tactical horizon
+                "entries": [
+                    {
+                        "pump_id": entry.pump_id,
+                        "target_frequency_hz": entry.target_frequency_hz,
+                        "start_time": entry.start_time.isoformat(),
+                        "end_time": entry.end_time.isoformat(),
+                    }
+                    for entry in response.entries
+                ],
+                "justification": response.justification,
+            }
+            
+            # Try backend endpoint first (primary path)
+            try:
+                backend_response = httpx.post(
+                    f"{self.backend_url}/system/schedule",
+                    json=schedule_dict,
+                    timeout=5.0,
+                )
+                if backend_response.status_code == 200:
+                    logger.info("Successfully wrote schedule to digital twin via backend")
+                    return
+            except Exception as e:
+                logger.debug(f"Failed to write schedule via backend: {e}")
+            
+            # Try direct MCP access if configured (optional standalone mode)
+            if self.digital_twin_mcp_url:
+                try:
+                    # Write each pump frequency individually via MCP
+                    for entry in schedule_dict["entries"]:
+                        # Convert pump_id format if needed (e.g., "P1" -> "1.1")
+                        pump_id = entry["pump_id"]
+                        if pump_id.startswith("P"):
+                            pump_num = int(pump_id[1:])
+                            line = (pump_num - 1) // 4 + 1
+                            pump = ((pump_num - 1) % 4) + 1
+                            pump_id = f"{line}.{pump}"
+                        
+                        variable_name = f"PumpFrequency.{pump_id}.hz"
+                        mcp_response = httpx.post(
+                            f"{self.digital_twin_mcp_url}/tools/write_opcua_variable",
+                            json={
+                                "variable_name": variable_name,
+                                "value": str(entry["target_frequency_hz"]),
+                            },
+                            timeout=5.0,
+                        )
+                        if mcp_response.status_code == 200:
+                            logger.debug(f"Wrote {variable_name} = {entry['target_frequency_hz']} Hz via MCP")
+                except Exception as e:
+                    logger.debug(f"Failed to write schedule via MCP: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to write schedule to digital twin: {e}")
 
     def _get_forecasts(self, horizon_minutes: int) -> ForecastData:
         """Get forecasts from agents or generate stub data."""
@@ -343,9 +437,26 @@ class OptimizationAgent(BaseMCPAgent):
         except Exception:
             pass
         
-        # Try to get inflow forecast
+        # Try to get weather forecast (can be used to improve inflow prediction)
+        weather_forecast = None
+        try:
+            response = httpx.post(
+                f"{self.backend_url}/weather/forecast",
+                json={"lookahead_hours": min(72, horizon_minutes // 60), "location": "Helsinki"},
+                timeout=5.0,
+            )
+            if response.status_code == 200:
+                weather_data = response.json()
+                weather_forecast = weather_data
+                logger.debug(f"Got weather forecast: {len(weather_data)} points")
+        except Exception as e:
+            logger.debug(f"Failed to get weather forecast: {e}")
+        
+        # Try to get inflow forecast (can use weather data to improve prediction)
         inflow_forecast = []
         try:
+            # If we have weather data, we could pass it to inflow agent for better prediction
+            # For now, just call the inflow agent
             response = httpx.post(
                 f"{self.inflow_agent_url}/predict_inflow",
                 json={"lookahead_hours": horizon_minutes / 60},
@@ -356,6 +467,31 @@ class OptimizationAgent(BaseMCPAgent):
                 inflow_forecast = [p.get("inflow_m3_s", 2.0) for p in data]
         except Exception:
             pass
+        
+        # If we have weather forecast but no inflow forecast, use weather to estimate inflow
+        # (precipitation typically correlates with inflow after some delay)
+        if not inflow_forecast and weather_forecast:
+            logger.debug("Using weather forecast to estimate inflow")
+            # Simple heuristic: precipitation increases inflow with 1-2 hour delay
+            # Base inflow + precipitation effect
+            base_inflow = 2.0  # m³/s baseline
+            # Initialize inflow forecast array
+            inflow_forecast = [base_inflow] * num_steps
+            # Process weather data (handle both dict and object formats)
+            for i, weather_point in enumerate(weather_forecast[:num_steps]):
+                # Handle both dict and object formats
+                if isinstance(weather_point, dict):
+                    precip_mm = weather_point.get("precipitation_mm", 0.0)
+                else:
+                    precip_mm = getattr(weather_point, "precipitation_mm", 0.0)
+                
+                # Convert mm/h precipitation to m³/s inflow effect
+                # Rough estimate: 1 mm/h over catchment area -> ~0.1 m³/s inflow
+                precip_effect = precip_mm * 0.1
+                # Apply with 1-hour delay (4 steps of 15 min)
+                delay_steps = 4
+                if i + delay_steps < num_steps:
+                    inflow_forecast[i + delay_steps] = base_inflow + precip_effect
         
         # Fill in stub data if needed
         if not price_forecast:

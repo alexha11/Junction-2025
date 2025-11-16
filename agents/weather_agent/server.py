@@ -31,12 +31,15 @@ async def weather_forecast(request: WeatherRequest) -> List[WeatherPoint]:
 
 def run() -> None:
     """Convenience entrypoint for `python -m agents.weather_agent.server`."""
+    import os
     import uvicorn
-
+    
+    port = int(os.getenv("AGENT_PORT", "8101"))
+    
     uvicorn.run(
         "agents.weather_agent.server:app",
         host="0.0.0.0",
-        port=8101,
+        port=port,
         reload=False,
     )
 
