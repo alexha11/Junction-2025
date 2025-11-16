@@ -5,6 +5,8 @@ from mcp.client.sse import sse_client
 
 
 port = int(os.environ.get("MCP_SERVER_PORT", 8080))
+DEFAULT_MCP_SERVER_URL = "http://57.129.98.111:8080/sse"
+MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", DEFAULT_MCP_SERVER_URL)
 
 
 def extract_text_content(result):
@@ -18,7 +20,7 @@ def extract_text_content(result):
 
 
 async def main():
-    transport = sse_client(f"http://localhost:{port}/sse")
+    transport = sse_client(MCP_SERVER_URL)
 
     try:
         async with transport as (read, write):
@@ -73,8 +75,7 @@ async def main():
                 )
                 print(f"Aggregate multiple result: {extract_text_content(result)}")
     except Exception as e:
-        print(f"Error connecting to MCP server: {e}")
-        print(f"Make sure the MCP server is running on http://localhost:{port}/")
+        print(f"Make sure the MCP server is running at {MCP_SERVER_URL}/")
 
 
 if __name__ == "__main__":

@@ -181,7 +181,7 @@ class SimulationController:
         try:
             while True:
                 for timestamp, row in self.hist_data.hist_df.iterrows():
-                    print(f"Updating to timestamp: {timestamp}")
+                    # print(f"Updating to timestamp: {timestamp}")
 
                     opc_server.update_variables(row, cast(pd.Timestamp, timestamp))
                     opc_server.update_simulation_time(cast(pd.Timestamp, timestamp))
