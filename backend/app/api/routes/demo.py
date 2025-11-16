@@ -11,8 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+import shutil
 
 # Load .env file explicitly (since os.getenv() doesn't auto-load it)
 try:
@@ -55,6 +57,10 @@ logger = logging.getLogger(__name__)
 _simulation_state: Dict[str, Any] = {}
 _simulation_task: Optional[asyncio.Task] = None
 _simulation_lock = asyncio.Lock()  # Lock for thread-safe access
+
+# Directory for uploaded simulation data files
+_upload_dir = _repo_root / "uploaded_data"
+_upload_dir.mkdir(exist_ok=True)
 
 
 class SimulationStartRequest(BaseModel):
@@ -132,17 +138,21 @@ async def _run_simulation_background(
                 _simulation_state["error"] = f"Invalid end_time format: {end_time}"
                 return
         
-        # Find data file
+        # Find data file - check uploaded files first, then default locations
         data_file_path = None
+        is_uploaded_file = False
         possible_paths = [
-            _repo_root / "agents" / "optimizer_agent" / data_file,
-            _repo_root / "sample" / "Valmet" / data_file,
-            _repo_root / "sample" / data_file,
+            (_upload_dir / data_file, True),  # Check uploaded files first - mark as uploaded
+            (_repo_root / "agents" / "optimizer_agent" / data_file, False),
+            (_repo_root / "sample" / "Valmet" / data_file, False),
+            (_repo_root / "sample" / data_file, False),
         ]
         
-        for path in possible_paths:
+        for path, is_uploaded in possible_paths:
             if path.exists():
                 data_file_path = path
+                is_uploaded_file = is_uploaded
+                logger.info(f"Using data file: {data_file_path} (uploaded={is_uploaded_file})")
                 break
         
         if not data_file_path:
@@ -150,11 +160,20 @@ async def _run_simulation_background(
             _simulation_state["error"] = f"Data file not found: {data_file}"
             return
         
-        # Initialize data loader
+        # When using uploaded file, use file-only mode (no agents, no digital_twin)
+        if is_uploaded_file:
+            logger.info("📁 Using uploaded file - simulation will use file data only (no agents, no digital_twin)")
+            logger.info("   All state, forecasts, and pump data will come from the uploaded file")
+            logger.info("   No external API calls to weather/price/inflow agents or digital_twin")
+        
+        # Initialize data loader - this reads ONLY from the file, no agent calls
         data_loader = HSYDataLoader(
             excel_file=str(data_file_path),
             price_type='normal',
         )
+        
+        if is_uploaded_file:
+            logger.info("   ✅ Data loader initialized - file-only mode active")
         
         # Get data range if times not provided
         if not start_dt or not end_dt:
@@ -244,15 +263,20 @@ async def _run_simulation_background(
                     return True  # Continue anyway
         
         # Create simulator with async callback
+        # When using uploaded file, use file-only mode (no external agents/digital_twin)
+        # LLM can still be used for explanations if available
         simulator = DemoSimulator(
             data_loader=data_loader,
             optimizer=optimizer,
             reoptimize_interval_minutes=15,
             update_callback=store_message_async,  # Use async callback for thread safety
-            llm_explainer=llm_explainer,
+            llm_explainer=llm_explainer if is_uploaded_file else llm_explainer,  # LLM still available for explanations
             generate_explanations=llm_explainer is not None,
             generate_strategic_plan=llm_explainer is not None,
         )
+        
+        if is_uploaded_file:
+            logger.info("✅ Simulation configured for file-only mode - all data from uploaded file, no agent/digital_twin calls")
         
         # Run simulation
         logger.info(f"Starting background simulation: {start_dt} to {end_dt}, speed={speed_multiplier}x")
@@ -357,4 +381,99 @@ async def stop_simulation():
     return {"status": "stopped", "message": "Simulation stopped"}
 
 
+@router.post("/upload-data")
+async def upload_data_file(file: UploadFile = File(...)):
+    """Upload a CSV/Excel file for simulation data.
+    
+    The uploaded file will be saved and can be used in simulations by specifying
+    the filename in the start_simulation request.
+    """
+    try:
+        # Validate file extension
+        allowed_extensions = {'.xlsx', '.xls', '.csv'}
+        file_ext = Path(file.filename).suffix.lower() if file.filename else ''
+        
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+            )
+        
+        # Save file to upload directory
+        file_path = _upload_dir / file.filename
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        logger.info(f"Uploaded data file: {file.filename} ({file_path.stat().st_size} bytes)")
+        
+        return {
+            "status": "success",
+            "message": f"File uploaded successfully: {file.filename}",
+            "filename": file.filename,
+            "size_bytes": file_path.stat().st_size,
+        }
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+
+
+@router.get("/list-data-files")
+async def list_data_files():
+    """List all available data files (uploaded and default)."""
+    files = []
+    
+    # Get uploaded files
+    if _upload_dir.exists():
+        for file_path in _upload_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in {'.xlsx', '.xls', '.csv'}:
+                files.append({
+                    "filename": file_path.name,
+                    "source": "uploaded",
+                    "size_bytes": file_path.stat().st_size,
+                    "modified": file_path.stat().st_mtime,
+                })
+    
+    # Get default files from known locations
+    default_locations = [
+        _repo_root / "agents" / "optimizer_agent",
+        _repo_root / "sample" / "Valmet",
+        _repo_root / "sample",
+    ]
+    
+    for location in default_locations:
+        if location.exists():
+            for file_path in location.glob("*.xlsx"):
+                if file_path.name not in [f["filename"] for f in files]:
+                    files.append({
+                        "filename": file_path.name,
+                        "source": "default",
+                        "size_bytes": file_path.stat().st_size,
+                        "modified": file_path.stat().st_mtime,
+                    })
+    
+    return {"files": files}
+
+
+@router.delete("/delete-data-file/{filename}")
+async def delete_data_file(filename: str):
+    """Delete an uploaded data file."""
+    try:
+        file_path = _upload_dir / filename
+        
+        # Security: only allow deleting files in upload directory
+        if not file_path.resolve().is_relative_to(_upload_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Cannot delete files outside upload directory")
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        
+        file_path.unlink()
+        logger.info(f"Deleted uploaded file: {filename}")
+        
+        return {"status": "success", "message": f"File deleted: {filename}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete file: {str(e)}")
 

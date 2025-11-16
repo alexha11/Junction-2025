@@ -222,10 +222,47 @@ const OperationsPortal = () => {
   // Demo simulator integration
   const { connect, disconnect, isConnected, messages, lastMessage } = useDemoSimulator();
   const [simulationActive, setSimulationActive] = useState(false);
+  const [selectedDataFile, setSelectedDataFile] = useState<string>("Hackathon_HSY_data.xlsx");
+  const [availableFiles, setAvailableFiles] = useState<Array<{filename: string; source: string; size_bytes: number}>>([]);
+  const [uploading, setUploading] = useState(false);
   const welcomeMessagePlayed = useRef(false);
   const lastSpokenExplanation = useRef<string | null>(null);
   const lastSpokenStrategy = useRef<string | null>(null);
   const isPlayingTTS = useRef(false);
+  const audioUnlocked = useRef(false);
+
+  // Unlock audio on first user interaction (required by browser autoplay policy)
+  useEffect(() => {
+    const unlockAudio = async () => {
+      if (audioUnlocked.current) return;
+      
+      try {
+        // Create a silent audio context to unlock audio
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const buffer = audioContext.createBuffer(1, 1, 22050);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        source.start(0);
+        audioUnlocked.current = true;
+        console.log("🔓 Audio unlocked on user interaction");
+      } catch (e) {
+        console.warn("Could not unlock audio context:", e);
+      }
+    };
+
+    // Unlock on any user interaction
+    const events = ['click', 'touchstart', 'keydown'];
+    events.forEach(event => {
+      document.addEventListener(event, unlockAudio, { once: true });
+    });
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, unlockAudio);
+      });
+    };
+  }, []);
 
   // API hooks - forecasts always come from API endpoint, not simulation
   const { data: forecastSeries } = useSystemForecasts({
@@ -269,9 +306,106 @@ const OperationsPortal = () => {
   const inflow = pickSeries(forecastSeries, "inflow") ?? fallbackInflowSeries;
   const price = pickSeries(forecastSeries, "price") ?? fallbackPriceSeries;
 
+  // Load available data files on mount
+  useEffect(() => {
+    const loadFiles = async () => {
+      try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const response = await fetch(`${apiUrl}/system/demo/list-data-files`);
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableFiles(data.files || []);
+        }
+      } catch (e) {
+        console.error('Failed to load data files:', e);
+      }
+    };
+    loadFiles();
+  }, []);
+
+  // Handle file upload
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch(`${apiUrl}/system/demo/upload-data`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Upload failed');
+      }
+
+      const result = await response.json();
+      console.log('File uploaded:', result);
+      
+      // Reload file list
+      const filesResponse = await fetch(`${apiUrl}/system/demo/list-data-files`);
+      if (filesResponse.ok) {
+        const data = await filesResponse.json();
+        setAvailableFiles(data.files || []);
+      }
+      
+      // Auto-select uploaded file
+      setSelectedDataFile(result.filename);
+      
+      alert(`File uploaded successfully: ${result.filename}`);
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setUploading(false);
+      // Reset input
+      event.target.value = '';
+    }
+  };
+
+  // Handle file deletion
+  const handleDeleteFile = async (filename: string) => {
+    if (!confirm(`Delete file "${filename}"?`)) return;
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/system/demo/delete-data-file/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Delete failed');
+      }
+
+      // Reload file list
+      const filesResponse = await fetch(`${apiUrl}/system/demo/list-data-files`);
+      if (filesResponse.ok) {
+        const data = await filesResponse.json();
+        setAvailableFiles(data.files || []);
+      }
+
+      // If deleted file was selected, reset to default
+      if (selectedDataFile === filename) {
+        setSelectedDataFile("Hackathon_HSY_data.xlsx");
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      alert(`Delete failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   // Handle simulation start/stop
   const handleStartSimulation = () => {
-    connect({ speed_multiplier: 1.0 }); // No speed control - process sequentially
+    connect({ 
+      speed_multiplier: 1.0,
+      data_file: selectedDataFile,
+    });
     setSimulationActive(true);
   };
 
@@ -300,20 +434,27 @@ const OperationsPortal = () => {
   // Helper function to safely play TTS (prevents overlapping calls)
   const safePlayText = async (text: string, voiceId: string = 'JBFqnCBsd6RMkjVDRZzb') => {
     if (isPlayingTTS.current) {
-      console.debug("TTS already playing, skipping:", text.substring(0, 50));
+      console.log("⚠️ TTS already playing, skipping:", text.substring(0, 50));
       return;
     }
     
     isPlayingTTS.current = true;
     try {
-      console.log("Playing TTS:", text.substring(0, 100));
+      console.log("🔊 Attempting to play TTS:", text.substring(0, 100));
       await playText(text, voiceId);
+      console.log("✅ TTS playback completed");
     } catch (error) {
-      console.error("TTS playback error:", error);
+      console.error("❌ TTS playback error:", error);
+      // Log more details about the error
+      if (error instanceof Error) {
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
+      }
     } finally {
       // Add a small delay before allowing next TTS call
       setTimeout(() => {
         isPlayingTTS.current = false;
+        console.log("🔓 TTS lock released");
       }, 500);
     }
   };
@@ -384,6 +525,62 @@ const OperationsPortal = () => {
           }`}>
             {isConnected ? "🟢 Connected" : "⚪ Disconnected"}
           </div>
+        </div>
+
+        {/* Data File Selection */}
+        <div className="space-y-3 border-t border-white/5 pt-4">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-semibold text-slate-300">Data File</label>
+            <label className="cursor-pointer">
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={handleFileUpload}
+                className="hidden"
+                disabled={uploading || simulationActive}
+              />
+              <span className="px-3 py-1.5 rounded-lg bg-brand-accent/20 hover:bg-brand-accent/30 border border-brand-accent/30 text-sm font-medium text-brand-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {uploading ? "Uploading..." : "📁 Upload File"}
+              </span>
+            </label>
+          </div>
+          
+          <select
+            value={selectedDataFile}
+            onChange={(e) => setSelectedDataFile(e.target.value)}
+            disabled={simulationActive}
+            className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-accent disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {availableFiles.map((file) => (
+              <option key={file.filename} value={file.filename}>
+                {file.filename} ({file.source === 'uploaded' ? '📤 Uploaded' : '📦 Default'})
+              </option>
+            ))}
+            {availableFiles.length === 0 && (
+              <option value="Hackathon_HSY_data.xlsx">Hackathon_HSY_data.xlsx (Default)</option>
+            )}
+          </select>
+
+          {/* Show uploaded files with delete option */}
+          {availableFiles.filter(f => f.source === 'uploaded').length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-400">Uploaded Files:</p>
+              {availableFiles
+                .filter(f => f.source === 'uploaded')
+                .map((file) => (
+                  <div key={file.filename} className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/5 border border-white/5">
+                    <span className="text-sm text-slate-300">{file.filename}</span>
+                    <button
+                      onClick={() => handleDeleteFile(file.filename)}
+                      disabled={simulationActive || selectedDataFile === file.filename}
+                      className="px-2 py-1 rounded text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-4">

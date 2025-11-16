@@ -280,7 +280,24 @@ class LLMExplainer:
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
+                
+                # Try to parse JSON response with better error handling
+                try:
+                    data = response.json()
+                except ValueError as json_err:
+                    # Log the raw response for debugging
+                    response_text = response.text
+                    logger.error(f"LLM: JSON parsing error: {json_err}")
+                    logger.error(f"LLM: Response status: {response.status_code}")
+                    logger.error(f"LLM: Response text (first 500 chars): {response_text[:500]}")
+                    logger.error(f"LLM: Response text (around error position 810): {response_text[max(0, 800):min(len(response_text), 820)]}")
+                    return None
+                
+                # Validate response structure
+                if "choices" not in data or len(data["choices"]) == 0:
+                    logger.error(f"LLM: Invalid response structure - no choices found: {data}")
+                    return None
+                
                 explanation = data["choices"][0]["message"]["content"].strip()
                 logger.debug(f"LLM: Successfully received explanation ({len(explanation)} chars)")
                 logger.debug(f"LLM Response: {explanation}")
@@ -290,6 +307,10 @@ class LLMExplainer:
             return None
         except httpx.HTTPStatusError as e:
             logger.error(f"LLM: HTTP error {e.response.status_code}: {e.response.text} - returning None (no fallback)")
+            return None
+        except ValueError as e:
+            # JSON parsing errors are already handled above, but catch any other ValueError
+            logger.error(f"LLM: JSON parsing error: {e} - returning None (no fallback)")
             return None
         except Exception as e:
             logger.error(f"LLM: Unexpected error: {e} - returning None (no fallback)", exc_info=True)
@@ -429,7 +450,23 @@ Focus on the strategic reasoning and decision logic, not just what the schedule 
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
+                
+                # Try to parse JSON response with better error handling
+                try:
+                    data = response.json()
+                except ValueError as json_err:
+                    # Log the raw response for debugging
+                    response_text = response.text
+                    logger.error(f"LLM: JSON parsing error in strategic plan: {json_err}")
+                    logger.error(f"LLM: Response status: {response.status_code}")
+                    logger.error(f"LLM: Response text (first 500 chars): {response_text[:500]}")
+                    return None
+                
+                # Validate response structure
+                if "choices" not in data or len(data["choices"]) == 0:
+                    logger.error(f"LLM: Invalid response structure - no choices found: {data}")
+                    return None
+                
                 plan_text = data["choices"][0]["message"]["content"].strip()
                 
                 logger.debug(f"LLM: Successfully received strategic plan ({len(plan_text)} chars)")
@@ -539,7 +576,23 @@ Focus on the strategic reasoning and decision logic, not just what the schedule 
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
+                
+                # Try to parse JSON response with better error handling
+                try:
+                    data = response.json()
+                except ValueError as json_err:
+                    # Log the raw response for debugging
+                    response_text_raw = response.text
+                    logger.error(f"LLM: JSON parsing error in emergency response: {json_err}")
+                    logger.error(f"LLM: Response status: {response.status_code}")
+                    logger.error(f"LLM: Response text (first 500 chars): {response_text_raw[:500]}")
+                    return None
+                
+                # Validate response structure
+                if "choices" not in data or len(data["choices"]) == 0:
+                    logger.error(f"LLM: Invalid response structure - no choices found: {data}")
+                    return None
+                
                 response_text = data["choices"][0]["message"]["content"].strip()
                 
                 logger.debug(f"LLM Emergency Response: {response_text}")
