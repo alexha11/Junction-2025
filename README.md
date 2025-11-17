@@ -2,7 +2,7 @@
 
 End-to-end platform for optimizing HSY Blominmäki wastewater pumping using multi-agent forecasts, a FastAPI orchestration backend, a React operator dashboard, and supporting digital-twin tooling.
 
-**Live demo**: https://front-end-524386263600.europe-north1.run.app/ (DNS cut-over pending public domain)
+**Live demo**: https://front-end-524386263600.europe-north1.run.app/ (Off for saving resource)
 
 ## 📚 Table of Contents
 
