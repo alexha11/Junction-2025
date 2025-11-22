@@ -1,5 +1,7 @@
 # HSY Blominmäki AI Agent Pumping Optimization System
 
+### 🥈 2nd Place Challenge Partner at Junction 2025 — Europe’s biggest AI hackathon!
+
 End-to-end platform for optimizing HSY Blominmäki wastewater pumping using multi-agent forecasts, a FastAPI orchestration backend, a React operator dashboard, and supporting digital-twin tooling.
 
 **Live demo**: https://front-end-524386263600.europe-north1.run.app/ (Off for saving resource)
