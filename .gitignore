@@ -11,4 +11,4 @@ node_modules/
 dist/
 *.tar
 *.db
-
+simplified_schedule_system/
