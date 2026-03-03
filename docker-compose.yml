@@ -1,85 +1,46 @@
-name: hsy-platform
-
 services:
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    image: hsy-backend:latest
-    container_name: hsy-backend
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      OPTIMIZER_INTERVAL_MINUTES: ${OPTIMIZER_INTERVAL_MINUTES:-15}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/hsy}
-      WEATHER_AGENT_URL: ${WEATHER_AGENT_URL:-http://host.docker.internal:8101}
-      PRICE_AGENT_URL: ${PRICE_AGENT_URL:-http://host.docker.internal:8102}
-      STATUS_AGENT_URL: ${STATUS_AGENT_URL:-http://host.docker.internal:8103}
-      INFLOW_AGENT_URL: ${INFLOW_AGENT_URL:-http://host.docker.internal:8104}
-      OPTIMIZER_AGENT_URL: ${OPTIMIZER_AGENT_URL:-http://host.docker.internal:8105}
-      OPCUA_SERVER_URL: ${OPCUA_SERVER_URL:-opc.tcp://opcua.flowoptimization.app:4840/wastewater/}
-      DIGITAL_TWIN_MCP_URL: ${DIGITAL_TWIN_MCP_URL:-https://mcp.flowoptimization.app/sse}
-      # LLM/Featherless API for explanations
-      FEATHERLESS_API_BASE: ${FEATHERLESS_API_BASE:-}
-      FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instruct}
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
-    volumes:
-      - ./backend:/workspace/backend
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
-    healthcheck:
-      test:
-        ["CMD-SHELL", "curl -fsS http://localhost:8000/system/state || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    depends_on:
-      - opcua-server
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_WEATHER_AGENT_URL: ${VITE_WEATHER_AGENT_URL:-http://backend:8000/weather/forecast}
-    image: hsy-frontend:latest
-    container_name: hsy-frontend
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
-
   opcua-server:
     build:
-      context: ./digital-twin/opcua-server
+      context: digital-twin/opcua-server
       dockerfile: Dockerfile
-    image: hsy-opcua-server:latest
-    container_name: hsy-opcua-server
-    ports:
-      - "${OPCUA_PORT:-4840}:4840"
-    restart: unless-stopped
-
-  mcp-server:
-    build:
-      context: ./digital-twin/mcp-server
-      dockerfile: Dockerfile
-    image: hsy-mcp-server:latest
-    container_name: hsy-mcp-server
     environment:
-      MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8080}
+      SPEEDUP: "900"
     ports:
-      - "${MCP_PORT:-8080}:8080"
+      - "4840:4840"
+
+  pump-scheduler:
+    build:
+      context: .
+      dockerfile: pump-scheduler/Dockerfile
     depends_on:
       - opcua-server
-    restart: unless-stopped
+    environment:
+      OPCUA_ENDPOINT: opc.tcp://opcua-server:4840/wastewater/
+      OPC_POLL_SECONDS: "0.05"
+      ROLLING_STEPS: "192"
+      MIN_HISTORY_STEPS: "32"
+      REOPTIMIZE_EVERY_SAMPLES: "1"
+      COMMAND_MODE: "db"
+      DB_PATH: /app/data/scheduler.db
+      WEB_PORT: "8090"
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pump-scheduler/data:/app/data
 
-networks:
-  default:
-    name: hsy-network
-
-volumes:
-  postgres_data:
+  pump-actuator:
+    build:
+      context: .
+      dockerfile: pump-scheduler/Dockerfile
+    depends_on:
+      - pump-scheduler
+      - opcua-server
+    command: ["python", "/app/actuator.py"]
+    environment:
+      DB_PATH: /app/data/scheduler.db
+      ACTUATOR_MODE: "dryrun"
+      ACTUATOR_POLL_SECONDS: "0.5"
+      COMMAND_OPCUA_ENDPOINT: opc.tcp://opcua-server:4840/wastewater/
+      # COMMAND_NODE_MAP: /app/opc_command_node_map.example.json
+    volumes:
+      - ./pump-scheduler/data:/app/data

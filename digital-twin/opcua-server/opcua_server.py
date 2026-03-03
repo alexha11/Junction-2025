@@ -35,6 +35,7 @@ class WastewaterOPCUAServer:
         self.hist_data = HistoricalData()
         self.var_map: Dict[str, Node] = {}
         self.simulation_time_var = None
+        self.simulation_speed_var = None
         self._setup_database()
         self._setup_server()
 
@@ -98,6 +99,20 @@ class WastewaterOPCUAServer:
             self.idx, "SimulationTime", str(pd.Timestamp.now())
         )
         self.simulation_time_var.set_writable(False)
+
+        self.simulation_speed_var = self.station.add_variable(
+            self.idx, "SimulationSpeedup", float(SPEEDUP)
+        )
+        self.simulation_speed_var.set_writable(True)
+
+    def get_simulation_speedup(self) -> float:
+        if self.simulation_speed_var is None:
+            return float(SPEEDUP)
+        try:
+            value = float(self.simulation_speed_var.get_value())
+            return max(1.0, value)
+        except (ValueError, TypeError):
+            return float(SPEEDUP)
 
     def get_display_name(self, position: int) -> str:
         ordered_column_display_names = [
@@ -176,7 +191,7 @@ class SimulationController:
         self.speedup = speedup  # 1 = real-time, 10 = 10x faster, 900 = 900x faster
 
     def run_simulation(self, opc_server: WastewaterOPCUAServer) -> None:
-        print(f"Starting simulation with {self.speedup}x speedup")
+        print(f"Starting simulation with initial {self.speedup}x speedup")
 
         try:
             while True:
@@ -186,7 +201,8 @@ class SimulationController:
                     opc_server.update_variables(row, cast(pd.Timestamp, timestamp))
                     opc_server.update_simulation_time(cast(pd.Timestamp, timestamp))
 
-                    time.sleep(900 / self.speedup)
+                    current_speedup = opc_server.get_simulation_speedup()
+                    time.sleep(900 / current_speedup)
 
                 print("Simulation completed, restarting...")
         except KeyboardInterrupt:
