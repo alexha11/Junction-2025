@@ -222,6 +222,8 @@ const OperationsPortal = () => {
   // Demo simulator integration
   const { connect, disconnect, isConnected, messages, lastMessage } = useDemoSimulator();
   const [simulationActive, setSimulationActive] = useState(false);
+  // Track the last simulation_step separately so data persists after simulation completes
+  const [lastSimulationStep, setLastSimulationStep] = useState<any>(null);
   const [selectedDataFile, setSelectedDataFile] = useState<string>("Hackathon_HSY_data.xlsx");
   const [availableFiles, setAvailableFiles] = useState<Array<{filename: string; source: string; size_bytes: number}>>([]);
   const [uploading, setUploading] = useState(false);
@@ -279,27 +281,26 @@ const OperationsPortal = () => {
     enabled: !simulationActive, // Disable when simulation is active
   });
 
-  // Use simulation data if active, otherwise use API data
-  // Note: Forecasts always come from API endpoint, not simulation
-  // Only update system overview when at least 1 pump is open
-  const simulationState = simulationActive && lastMessage?.type === "simulation_step"
-    ? simulationStepToSystemState(lastMessage)
+  // Find the last simulation_step from all messages (handles bulk delivery)
+  useEffect(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === "simulation_step") {
+        setLastSimulationStep(messages[i]);
+        break;
+      }
+    }
+  }, [messages]);
+
+  // Use the last simulation_step (persists through summary/completion messages)
+  const simulationState = simulationActive && lastSimulationStep
+    ? simulationStepToSystemState(lastSimulationStep)
     : null;
-  const simulationSchedule = simulationActive && lastMessage?.type === "simulation_step"
-    ? simulationStepToSchedule(lastMessage)
+  const simulationSchedule = simulationActive && lastSimulationStep
+    ? simulationStepToSchedule(lastSimulationStep)
     : null;
 
-  // Helper function to check if at least one pump is active
-  const hasActivePump = (pumps?: SystemState['pumps']) => {
-    return pumps?.some(pump => 
-      pump.state === "running" || pump.state === "on" || pump.frequency_hz > 0
-    ) ?? false;
-  };
-
-  // Only use simulation state if at least one pump is active
-  const state = (simulationState && hasActivePump(simulationState.pumps)) 
-    ? simulationState 
-    : fallbackState;
+  // Use simulation state whenever simulation is active and data is available
+  const state = simulationState ?? fallbackState;
   const schedule = simulationSchedule ?? fallbackSchedule;
 
   // Forecasts always come from API endpoint, never from simulation
@@ -402,24 +403,20 @@ const OperationsPortal = () => {
 
   // Handle simulation start/stop
   const handleStartSimulation = () => {
-    connect({ 
+    setLastSimulationStep(null); // clear stale data from previous run
+    connect({
       speed_multiplier: 1.0,
       data_file: selectedDataFile,
     });
     setSimulationActive(true);
   };
 
+  // Clear last step when user manually stops simulation
   const handleStopSimulation = () => {
     disconnect();
     setSimulationActive(false);
+    setLastSimulationStep(null);
   };
-
-  // Auto-stop simulation when it completes
-  useEffect(() => {
-    if (lastMessage?.type === "simulation_summary") {
-      setSimulationActive(false);
-    }
-  }, [lastMessage]);
 
   const currentTemperature =
     shortTerm.data?.[0]?.temperature_c ??
@@ -459,15 +456,15 @@ const OperationsPortal = () => {
     }
   };
 
-  // Play welcome message only when at least 1 pump is on (only once)
+  // Play welcome message once simulation is active
   useEffect(() => {
     if (welcomeMessagePlayed.current) return; // Already played
-    
-    if (hasActivePump(state?.pumps)) {
+
+    if (simulationActive && state && state !== fallbackState) {
       welcomeMessagePlayed.current = true;
       safePlayText('Welcome to the Operations Cockpit. All systems are functioning within normal parameters.');
     }
-  }, [state?.pumps]);
+  }, [simulationActive, state]);
 
   // Speak out explanation when it changes (only if it's not the default fallback)
   // Auto-play when content changes

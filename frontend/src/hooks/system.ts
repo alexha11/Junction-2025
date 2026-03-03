@@ -66,6 +66,8 @@ export interface ScheduleRecommendation {
 	strategy?: string; // Optional strategy from simulation
 }
 
+const API_BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+
 const fetchJSON = async <T>(url: string): Promise<T> => {
 	const response = await fetch(url);
 	if (!response.ok) {
@@ -79,7 +81,7 @@ const fetchJSON = async <T>(url: string): Promise<T> => {
 export const useSystemState = (options?: { enabled?: boolean }) =>
 	useQuery<SystemState>({
 		queryKey: ["system-state"],
-		queryFn: () => fetchJSON<SystemState>("https://hsy-backend-524386263600.europe-west1.run.app/system/state"),
+		queryFn: () => fetchJSON<SystemState>(`${API_BASE}/system/state`),
 		refetchInterval: 30_000,
 		enabled: options?.enabled !== false,
 	});
@@ -87,7 +89,7 @@ export const useSystemState = (options?: { enabled?: boolean }) =>
 export const useSystemForecasts = (options?: { enabled?: boolean }) =>
 	useQuery<ForecastSeries[]>({
 		queryKey: ["system-forecasts"],
-		queryFn: () => fetchJSON<ForecastSeries[]>("https://hsy-backend-524386263600.europe-west1.run.app/system/forecasts"),
+		queryFn: () => fetchJSON<ForecastSeries[]>(`${API_BASE}/system/forecasts`),
 		staleTime: 60_000,
 		enabled: options?.enabled !== false,
 	});
@@ -96,7 +98,7 @@ export const useScheduleRecommendation = (options?: { enabled?: boolean }) =>
 	useQuery<ScheduleRecommendation>({
 		queryKey: ["system-schedule"],
 		queryFn: () =>
-			fetchJSON<ScheduleRecommendation>("https://hsy-backend-524386263600.europe-west1.run.app/system/schedule"),
+			fetchJSON<ScheduleRecommendation>(`${API_BASE}/system/schedule`),
 		refetchInterval: 60_000,
 		enabled: options?.enabled !== false,
 	});

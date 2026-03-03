@@ -1,11 +1,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
-COPY package*.json ./
-RUN set -eux; \
-	npm ci --legacy-peer-deps; \
-	rollup_version=$(node -p "require('./node_modules/rollup/package.json').version"); \
-	npm install --no-save "@rollup/rollup-linux-x64-musl@${rollup_version}"
+COPY package.json package-lock.json* ./
+RUN npm install --legacy-peer-deps
 
 COPY . .
 RUN npm run build
